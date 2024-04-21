@@ -1,0 +1,23 @@
+{
+  "gLogger": {
+    "console": "debug",
+    "default": "silly",
+    "telegram": "info"
+  },
+  "ig-api": {
+    "demo": {
+      "api-key": "provide a valid IG API key",
+      "username": "replace with your username",
+      "password": "replace with your password"
+    },
+    "live": false
+  },
+  "bot": {
+    "pause": false,
+    "drain": true
+  },
+  "telegram": {
+    "apiKey": "replace with your telegram bot api key",
+    "console": false
+  }
+}

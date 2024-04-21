@@ -1,0 +1,18 @@
+{
+  "ig-api": {
+    "demo": {
+      "api-key": "IG_DEMO_API_KEY",
+      "username": "IG_DEMO_USERNAME",
+      "password": "IG_DEMO_PASSWORD"
+    },
+    "live": {
+      "api-key": "IG_LIVE_API_KEY",
+      "username": "IG_LIVE_USERNAME",
+      "password": "IG_LIVE_PASSWORD"
+    }
+  },
+  "telegram": {
+    "apiKey": "TELEGRAM_API_KEY",
+    "console": "TELEGRAM_CHAT_ID"
+  }
+}
