@@ -5,19 +5,21 @@
     "telegram": "info"
   },
   "ig-api": {
-    "demo": {
-      "api-key": "provide a valid IG API key",
-      "username": "replace with your username",
-      "password": "replace with your password"
-    },
-    "live": false
-  },
-  "bot": {
-    "pause": false,
-    "drain": true
+    "url": "https://api.ig.com/gateway/deal/",
+    "api-key": "provide a valid IG API key",
+    "username": "replace with your username",
+    "password": "replace with your password"
   },
   "telegram": {
     "apiKey": "replace with your telegram bot api key",
     "console": false
+  },
+  "trader": {
+    "pause": false,
+    "market": "Options (US Tech 100)",
+    "underlying": ["IX.D.NASDAQ.OPTCALL.IP", "IX.D.NASDAQ.OPTPUT.IP"],
+    "delay": 5,
+    "delta": 55,
+    "budget": 1
   }
 }

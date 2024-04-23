@@ -21,6 +21,8 @@ import { LogLevel, gLogger } from "./logger";
 enum IbCwpEndpointTypes {
   CreateSession,
   GetMarketNavigation,
+  GetMarket,
+  GetMarkets,
   GetAccounts,
 }
 
@@ -36,7 +38,15 @@ const endpoints: Record<IbCwpEndpointTypes, IbCwpEndpoint> = {
   },
   [IbCwpEndpointTypes.GetMarketNavigation]: {
     method: "get",
-    url: "/marketnavigation",
+    url: "/marketnavigation/{nodeId}",
+  },
+  [IbCwpEndpointTypes.GetMarket]: {
+    method: "get",
+    url: "/markets/{epic}",
+  },
+  [IbCwpEndpointTypes.GetMarkets]: {
+    method: "get",
+    url: "/markets",
   },
   [IbCwpEndpointTypes.GetAccounts]: {
     method: "get",
@@ -46,7 +56,7 @@ const endpoints: Record<IbCwpEndpointTypes, IbCwpEndpoint> = {
 
 export class APIClient {
   static URL_DEMO: string = "https://demo-api.ig.com/gateway/deal/";
-  static URL_LIVE: string;
+  static URL_LIVE: string = "https://api.ig.com/gateway/deal/";
 
   private readonly api: AxiosInstance;
   private readonly apiKey: string;
@@ -68,6 +78,7 @@ export class APIClient {
   };
 
   constructor(baseURL: string, apiKey: string) {
+    gLogger.debug("APIClient.constructor", baseURL, apiKey);
     this.apiKey = apiKey;
     this.api = axios.create({
       baseURL,
@@ -79,6 +90,7 @@ export class APIClient {
       httpsAgent: new https.Agent({
         rejectUnauthorized: false,
       }),
+      maxRedirects: 0,
     });
   }
 
@@ -153,7 +165,7 @@ export class APIClient {
     if (this.oauthToken?.access_token)
       headers["Authorization"] =
         this.oauthToken.token_type + " " + this.oauthToken.access_token;
-    console.log(headers);
+    // console.log(headers);
     switch (endpoints[api].method) {
       case "post":
         return this.api.post(url, params, { headers });
@@ -229,10 +241,32 @@ export class APIClient {
     });
   }
 
-  public getMarketNavigation(): Promise<MarketNavigation> {
+  public getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
+    gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
+    return this.call(IbCwpEndpointTypes.GetMarketNavigation, {
+      nodeId,
+    }) as Promise<MarketNavigation>;
+  }
+
+  public getMarket(epic?: string): Promise<MarketNavigation> {
     gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
     return this.call(
-      IbCwpEndpointTypes.GetMarketNavigation,
+      IbCwpEndpointTypes.GetMarket,
+      {
+        epic,
+      },
+      { Version: "3" },
+    ) as Promise<MarketNavigation>;
+  }
+
+  public getMarkets(epics: string[]): Promise<MarketNavigation> {
+    gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
+    return this.call(
+      IbCwpEndpointTypes.GetMarkets,
+      {
+        epics: epics.join(","),
+      },
+      { Version: "2" },
     ) as Promise<MarketNavigation>;
   }
 

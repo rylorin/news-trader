@@ -1,20 +1,5 @@
 {
   "gLogger": {
     "console": "info"
-  },
-  "ig-api": {
-    "demo": false,
-    "live": {
-      "api-key": "provide a valid IG API key",
-      "username": "replace with your username",
-      "password": "replace with your password"
-    }
-  },
-  "trader": {
-    "tradeBudget": 2.5
-  },
-  "bot": {
-    "pause": false,
-    "drain": false
   }
 }
