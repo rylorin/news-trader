@@ -1,56 +1,79 @@
-// import { TimeInForce } from '@stoqey/ib';
 import axios, { AxiosError, AxiosInstance } from "axios";
 import https from "https";
 import {
   AccountsResponse,
+  DealConfirmation,
+  DealReferenceResponse,
+  Direction,
   MarketNavigation,
+  MarketSearch,
   OauthToken,
+  PositionCreateRequest,
+  PositionOrderType,
+  PositionTimeInForce,
   TradingSession,
 } from "ig-trading-api";
 import WebSocket from "ws";
 import { LogLevel, gLogger } from "./logger";
 
-// export interface OauthToken {
-//   access_token: string;
-//   expires_in: string;
-//   refresh_token: string;
-//   scope: string;
-//   token_type: string;
-// }
-
-enum IbCwpEndpointTypes {
+enum IgApiEndpoint {
   CreateSession,
+  GetSession,
+  RefreshSession,
   GetMarketNavigation,
   GetMarket,
   GetMarkets,
+  SearchMarkets,
   GetAccounts,
+  CreatePosition,
+  TradeConfirm,
 }
 
-interface IbCwpEndpoint {
+interface IgApiEndpointDef {
   method: "get" | "post" | "delete" | "put";
   url: string;
 }
 
-const endpoints: Record<IbCwpEndpointTypes, IbCwpEndpoint> = {
-  [IbCwpEndpointTypes.CreateSession]: {
+const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
+  [IgApiEndpoint.CreateSession]: {
     method: "post",
     url: "/session",
   },
-  [IbCwpEndpointTypes.GetMarketNavigation]: {
+  [IgApiEndpoint.GetSession]: {
+    method: "get",
+    url: "/session",
+  },
+  [IgApiEndpoint.RefreshSession]: {
+    method: "post",
+    url: "/session/refresh-token",
+  },
+  [IgApiEndpoint.GetMarketNavigation]: {
     method: "get",
     url: "/marketnavigation/{nodeId}",
   },
-  [IbCwpEndpointTypes.GetMarket]: {
+  [IgApiEndpoint.GetMarket]: {
     method: "get",
     url: "/markets/{epic}",
   },
-  [IbCwpEndpointTypes.GetMarkets]: {
+  [IgApiEndpoint.GetMarkets]: {
     method: "get",
     url: "/markets",
   },
-  [IbCwpEndpointTypes.GetAccounts]: {
+  [IgApiEndpoint.SearchMarkets]: {
+    method: "get",
+    url: "/markets",
+  },
+  [IgApiEndpoint.GetAccounts]: {
     method: "get",
     url: "/accounts",
+  },
+  [IgApiEndpoint.CreatePosition]: {
+    method: "post",
+    url: "/positions/otc",
+  },
+  [IgApiEndpoint.TradeConfirm]: {
+    method: "get",
+    url: "/confirms/{dealReference}",
   },
 };
 
@@ -60,7 +83,7 @@ export class APIClient {
 
   private readonly api: AxiosInstance;
   private readonly apiKey: string;
-  private keepalive: NodeJS.Timer | undefined;
+  private keepalive: NodeJS.Timeout | undefined;
   private ws: WebSocket | undefined;
   private keepaliveWs: NodeJS.Timer | undefined;
 
@@ -94,64 +117,12 @@ export class APIClient {
     });
   }
 
-  // private ws_connect(session: string): Promise<void> {
-  //   return new Promise((resolve, reject) => {
-  //     let resolved = false;
-  //     const url = (this.params as IgApiAccount).url.replace('https:', 'wss:') + '/v1/api/ws';
-  //     this.ws = new WebSocket(url, { rejectUnauthorized: false })
-  //       .once('open', () => {
-  //         gLogger.log(LogLevel.Info, 'IgApiConnection.websocket', undefined, 'IgApiConnection stream Connected');
-  //         this.ws!.send(JSON.stringify({ session }));
-  //         this.ws!.send('tic'); // Ping session
-  //         this.ws!.send('spl+{}'); // Profit & Loss Updates
-  //         this.ws!.send('str+{}'); // Trades
-  //         this.keepaliveWs = setInterval(() => this.ws?.send('tic'), 60 * 1000);
-  //       })
-  //       .on('message', (data: Buffer) => {
-  //         if (!resolved) {
-  //           resolved = true;
-  //           gLogger.log(LogLevel.Info, 'IgApiConnection.websocket', undefined, 'Connection is Up');
-  //           resolve();
-  //         }
-  //         this.process_ws_message(JSON.parse(data.toString()));
-  //       })
-  //       .once('close', (data: any) => {
-  //         gLogger.log(LogLevel.Error, 'IgApiConnection.websocket', undefined, 'close', data);
-  //         this.ws = undefined;
-  //         if (!resolved) {
-  //           resolved = true;
-  //           reject();
-  //         }
-  //       })
-  //       .on('error', (data: any) => {
-  //         gLogger.log(LogLevel.Error, 'IgApiConnection.websocket', undefined, 'error', data);
-  //         if (!resolved) {
-  //           resolved = true;
-  //           reject();
-  //         }
-  //       });
-  //   });
-  // }
-
-  // public disconnect() {
-  //   if (this.keepaliveWs) clearInterval(this.keepaliveWs);
-  //   this.keepaliveWs = undefined;
-  //   this.ws?.close();
-  //   delete this.ws;
-  //   this.ws = undefined;
-  //   if (this.keepalive) clearInterval(this.keepalive);
-  //   this.keepalive = undefined;
-  // }
-
   private submit_request(
-    api: IbCwpEndpointTypes,
+    api: IgApiEndpoint,
     params?: any,
     extraHeaders?: any,
   ): Promise<Response> {
-    let url: string = endpoints[api].url.replace(
-      "{accountId}",
-      "this.params.accountName",
-    );
+    let url: string = endpoints[api].url;
     if (params) {
       for (const [key, value] of Object.entries(params)) {
         url = url.replace(
@@ -162,15 +133,19 @@ export class APIClient {
     }
     const headers = extraHeaders || {};
     if (this.accountId) headers["IG-ACCOUNT-ID"] = this.accountId;
-    if (this.oauthToken?.access_token)
+    if (
+      this.oauthToken?.access_token &&
+      (!extraHeaders || !("Authorization" in extraHeaders))
+    ) {
       headers["Authorization"] =
         this.oauthToken.token_type + " " + this.oauthToken.access_token;
-    // console.log(headers);
+    }
+    // console.log(headers, params);
     switch (endpoints[api].method) {
       case "post":
         return this.api.post(url, params, { headers });
       case "get":
-        return this.api.get(url, { headers });
+        return this.api.get(url, { params, headers });
       case "delete":
         return this.api.delete(url, { headers });
       case "put":
@@ -181,7 +156,7 @@ export class APIClient {
   }
 
   private call(
-    api: IbCwpEndpointTypes,
+    api: IgApiEndpoint,
     params?: any,
     headers?: any,
   ): Promise<Record<string, any>> {
@@ -225,9 +200,9 @@ export class APIClient {
     identifier: string,
     password: string,
   ): Promise<TradingSession> {
-    gLogger.info("IgApiConnection.connect", "connecting");
+    gLogger.info("IgApiConnection.createSession", "connecting");
     return this.call(
-      IbCwpEndpointTypes.CreateSession,
+      IgApiEndpoint.CreateSession,
       {
         encryptedPassword: false,
         identifier,
@@ -235,23 +210,50 @@ export class APIClient {
       },
       { Version: "3" },
     ).then((session) => {
-      this.oauthToken = session.oauthToken;
       this.accountId = session.accountId;
+      this.oauthToken = session.oauthToken;
+      this.keepalive = setTimeout(
+        () => this.heartbeat(),
+        parseInt(this.oauthToken!.expires_in) * 900,
+      );
       return session as TradingSession;
     });
   }
 
+  private heartbeat() {
+    gLogger.trace("IgApiConnection.heartbeat");
+    (
+      this.call(IgApiEndpoint.RefreshSession, {
+        refresh_token: this.oauthToken!.refresh_token,
+      }) as Promise<OauthToken>
+    )
+      .then((response) => {
+        gLogger.trace("IgApiConnection.heartbeat", response);
+        this.oauthToken = response;
+        this.keepalive = setTimeout(
+          () => this.heartbeat(),
+          parseInt(this.oauthToken.expires_in) * 900,
+        );
+      })
+      .catch((error) => console.error(error));
+  }
+
+  public disconnect() {
+    if (this.keepalive) clearInterval(this.keepalive);
+    this.keepalive = undefined;
+  }
+
   public getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
-    return this.call(IbCwpEndpointTypes.GetMarketNavigation, {
+    gLogger.debug("IgApiConnection.getMarketNavigation", nodeId);
+    return this.call(IgApiEndpoint.GetMarketNavigation, {
       nodeId,
     }) as Promise<MarketNavigation>;
   }
 
   public getMarket(epic?: string): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
+    gLogger.debug("IgApiConnection.getMarket", epic);
     return this.call(
-      IbCwpEndpointTypes.GetMarket,
+      IgApiEndpoint.GetMarket,
       {
         epic,
       },
@@ -260,9 +262,9 @@ export class APIClient {
   }
 
   public getMarkets(epics: string[]): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.connect", "getMarketNavigation");
+    gLogger.debug("IgApiConnection.getMarkets", epics);
     return this.call(
-      IbCwpEndpointTypes.GetMarkets,
+      IgApiEndpoint.GetMarkets,
       {
         epics: epics.join(","),
       },
@@ -270,10 +272,50 @@ export class APIClient {
     ) as Promise<MarketNavigation>;
   }
 
+  public searchMarkets(searchTerm: string): Promise<MarketSearch> {
+    gLogger.debug("IgApiConnection.searchMarkets", searchTerm);
+    return this.call(IgApiEndpoint.SearchMarkets, {
+      searchTerm,
+    }) as Promise<MarketSearch>;
+  }
+
   public getAccounts(): Promise<AccountsResponse> {
-    gLogger.debug("IgApiConnection.connect", "getAccounts");
-    return this.call(
-      IbCwpEndpointTypes.GetAccounts,
-    ) as Promise<AccountsResponse>;
+    gLogger.debug("IgApiConnection.getAccounts");
+    return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
+  }
+
+  public tradeConfirm(dealReference: string): Promise<DealConfirmation> {
+    gLogger.debug("IgApiConnection.tradeConfirm");
+    return this.call(IgApiEndpoint.TradeConfirm, {
+      dealReference,
+    }) as Promise<DealConfirmation>;
+  }
+
+  public createPosition(
+    epic: string,
+    currencyCode: string,
+    size: number,
+    level: number,
+  ): Promise<DealConfirmation> {
+    gLogger.debug("IgApiConnection.createPosition");
+    const createPositionRequest: PositionCreateRequest = {
+      epic,
+      direction: Direction.BUY,
+      size,
+      level,
+      currencyCode,
+      expiry: "-",
+      forceOpen: false,
+      guaranteedStop: false,
+      timeInForce: PositionTimeInForce.EXECUTE_AND_ELIMINATE,
+      orderType: PositionOrderType.LIMIT,
+    };
+    return (
+      this.call(IgApiEndpoint.CreatePosition, createPositionRequest, {
+        Version: "2",
+      }) as Promise<DealReferenceResponse>
+    ).then((response: DealReferenceResponse) =>
+      this.tradeConfirm(response.dealReference),
+    );
   }
 }
