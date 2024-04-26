@@ -11,7 +11,7 @@
     "password": "replace with your password"
   },
   "telegram": {
-    "apiKey": "replace with your telegram bot api key",
+    "apiKey": false,
     "console": false
   },
   "trader": {
@@ -19,7 +19,7 @@
     "market": "Options (US Tech 100)",
     "underlying": "US Tech 100 Barrière",
     "delay": 5,
-    "delta": 60,
-    "budget": 1
+    "delta": 50,
+    "budget": 2
   }
 }

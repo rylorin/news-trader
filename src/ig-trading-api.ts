@@ -8,12 +8,13 @@ import {
   MarketNavigation,
   MarketSearch,
   OauthToken,
+  Position,
   PositionCreateRequest,
+  PositionListResponse,
   PositionOrderType,
   PositionTimeInForce,
   TradingSession,
 } from "ig-trading-api";
-import WebSocket from "ws";
 import { LogLevel, gLogger } from "./logger";
 
 enum IgApiEndpoint {
@@ -27,6 +28,8 @@ enum IgApiEndpoint {
   GetAccounts,
   CreatePosition,
   TradeConfirm,
+  GetPosition,
+  GetPositions,
 }
 
 interface IgApiEndpointDef {
@@ -75,6 +78,14 @@ const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
     method: "get",
     url: "/confirms/{dealReference}",
   },
+  [IgApiEndpoint.GetPosition]: {
+    method: "get",
+    url: "/positions/{dealId}",
+  },
+  [IgApiEndpoint.GetPositions]: {
+    method: "get",
+    url: "/positions",
+  },
 };
 
 export class APIClient {
@@ -84,8 +95,6 @@ export class APIClient {
   private readonly api: AxiosInstance;
   private readonly apiKey: string;
   private keepalive: NodeJS.Timeout | undefined;
-  private ws: WebSocket | undefined;
-  private keepaliveWs: NodeJS.Timer | undefined;
 
   private oauthToken: OauthToken | undefined;
   private accountId: string | undefined;
@@ -200,7 +209,7 @@ export class APIClient {
     identifier: string,
     password: string,
   ): Promise<TradingSession> {
-    gLogger.info("IgApiConnection.createSession", "connecting");
+    gLogger.debug("IgApiConnection.createSession", "connecting");
     return this.call(
       IgApiEndpoint.CreateSession,
       {
@@ -214,7 +223,7 @@ export class APIClient {
       this.oauthToken = session.oauthToken;
       this.keepalive = setTimeout(
         () => this.heartbeat(),
-        parseInt(this.oauthToken!.expires_in) * 900,
+        (parseInt(this.oauthToken!.expires_in) - 10) * 1_000,
       );
       return session as TradingSession;
     });
@@ -232,7 +241,7 @@ export class APIClient {
         this.oauthToken = response;
         this.keepalive = setTimeout(
           () => this.heartbeat(),
-          parseInt(this.oauthToken.expires_in) * 900,
+          (parseInt(this.oauthToken.expires_in) - 10) * 1_000,
         );
       })
       .catch((error) => console.error(error));
@@ -284,19 +293,13 @@ export class APIClient {
     return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
   }
 
-  public tradeConfirm(dealReference: string): Promise<DealConfirmation> {
-    gLogger.debug("IgApiConnection.tradeConfirm");
-    return this.call(IgApiEndpoint.TradeConfirm, {
-      dealReference,
-    }) as Promise<DealConfirmation>;
-  }
-
   public createPosition(
     epic: string,
     currencyCode: string,
     size: number,
     level: number,
-  ): Promise<DealConfirmation> {
+    expiry = "-",
+  ): Promise<string> {
     gLogger.debug("IgApiConnection.createPosition");
     const createPositionRequest: PositionCreateRequest = {
       epic,
@@ -304,7 +307,7 @@ export class APIClient {
       size,
       level,
       currencyCode,
-      expiry: "-",
+      expiry,
       forceOpen: false,
       guaranteedStop: false,
       timeInForce: PositionTimeInForce.EXECUTE_AND_ELIMINATE,
@@ -314,8 +317,37 @@ export class APIClient {
       this.call(IgApiEndpoint.CreatePosition, createPositionRequest, {
         Version: "2",
       }) as Promise<DealReferenceResponse>
-    ).then((response: DealReferenceResponse) =>
-      this.tradeConfirm(response.dealReference),
-    );
+    ).then((response: DealReferenceResponse) => response.dealReference);
+  }
+
+  public tradeConfirm(dealReference: string): Promise<DealConfirmation> {
+    gLogger.debug("IgApiConnection.tradeConfirm", dealReference);
+    return this.call(IgApiEndpoint.TradeConfirm, {
+      dealReference,
+    }) as Promise<DealConfirmation>;
+  }
+
+  public getPosition(dealId?: string): Promise<Position> {
+    gLogger.debug("IgApiConnection.getPosition", dealId);
+    return this.call(
+      IgApiEndpoint.GetPosition,
+      {
+        dealId,
+      },
+      {
+        Version: "2",
+      },
+    ) as Promise<Position>;
+  }
+
+  public getPositions(): Promise<PositionListResponse> {
+    gLogger.debug("IgApiConnection.getPositions");
+    return this.call(
+      IgApiEndpoint.GetPositions,
+      {},
+      {
+        Version: "2",
+      },
+    ) as Promise<PositionListResponse>;
   }
 }

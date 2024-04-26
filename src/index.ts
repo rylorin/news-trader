@@ -10,27 +10,41 @@ dotenv.config();
 import { default as config, IConfig } from "config";
 
 // The following can relying on env var and config
-import { Market } from "ig-trading-api";
+import { DealConfirmation, DealStatus, Market, Position } from "ig-trading-api";
 import { Context, Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Message, Update } from "telegraf/typings/core/types/typegram";
 import { CommandContextExtn } from "telegraf/typings/telegram-types";
 import { APIClient } from "./ig-trading-api";
 import { gLogger, LogLevel } from "./logger";
-import { string2boolean } from "./utils";
+import { formatObject, string2boolean } from "./utils";
 
-type OptionEntry = {
-  strike: number;
-  callPrice: number | undefined;
-  putPrice: number | undefined;
+const StatusType = {
+  Idle: undefined,
+  Dealing: "Dealing",
+  Position: "Position",
+} as const;
+type StatusType = (typeof StatusType)[keyof typeof StatusType];
+
+const LegType = {
+  Put: "put",
+  Call: "call",
+} as const;
+type LegType = (typeof LegType)[keyof typeof LegType];
+
+type LegDealStatus = {
+  contract: Market;
+  dealReference: string | undefined;
+  dealConfirmation: DealConfirmation | undefined;
+  position: Position | undefined;
 };
 
-export const StatusType = {
-  Idle: "Idle",
-  Entering: "Entering",
-  Done: "Done",
-} as const;
-export type StatusType = (typeof StatusType)[keyof typeof StatusType];
+type DealingStatus = {
+  status: StatusType;
+  [LegType.Put]: LegDealStatus | undefined;
+  [LegType.Call]: LegDealStatus | undefined;
+  winningLeg: LegType | undefined;
+};
 
 /**
  * Trading bot implementation
@@ -38,7 +52,7 @@ export type StatusType = (typeof StatusType)[keyof typeof StatusType];
 export class MyTradingBotApp {
   private readonly config: IConfig;
   private readonly api;
-  private readonly telegram: Telegraf;
+  private readonly telegram: Telegraf | undefined;
   private timer: NodeJS.Timeout | undefined;
 
   private pauseMode: boolean;
@@ -46,7 +60,7 @@ export class MyTradingBotApp {
   private delay: number;
   private delta: number;
   private budget: number;
-  private status: StatusType;
+  private globalStatus: DealingStatus;
 
   constructor(config: IConfig) {
     this.config = config;
@@ -56,34 +70,46 @@ export class MyTradingBotApp {
     );
 
     this.pauseMode = string2boolean(this.config.get("trader.pause"));
-    this.status = StatusType.Idle;
+    this.globalStatus = {
+      status: StatusType.Idle,
+      put: undefined,
+      call: undefined,
+      winningLeg: undefined,
+    };
     this.delay = this.config.get("trader.delay");
     this.delta = this.config.get("trader.delta");
     this.budget = this.config.get("trader.budget");
 
-    // Create telegram bot to control application
-    this.telegram = new Telegraf(this.config.get("telegram.apiKey"));
-    this.telegram.start((ctx) => ctx.reply("Welcome"));
-    this.telegram.help((ctx) => ctx.reply("Send me a sticker"));
-    this.telegram.on(message("sticker"), (ctx) => ctx.reply("👍"));
-    this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
-    this.telegram.command("exit", (ctx) => this.handleExitCommand(ctx));
-    this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
-    this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
-    this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
-    this.telegram.command("status", (ctx) => this.handleStatusCommand(ctx));
-    this.telegram.command("whoami", (ctx) =>
-      ctx.reply(JSON.stringify(ctx.update)),
-    );
-    this.telegram.hears(/\/(.+)/, (ctx) => {
-      const cmd = ctx.match[1];
-      return ctx.reply(`command not found: '/${cmd}'. Type '/help' for help.`);
-    });
-    this.telegram.hears(/(.+)/, (ctx) =>
-      ctx.reply(
-        `Hello ${ctx.message.from.username}. What do you mean by '${ctx.text}'? 🧐`,
-      ),
-    );
+    if (this.config.get("telegram.apiKey")) {
+      // Create telegram bot to control application
+      this.telegram = new Telegraf(this.config.get("telegram.apiKey"));
+      this.telegram.start((ctx) => ctx.reply("Welcome"));
+      this.telegram.help((ctx) => ctx.reply("Send me a sticker"));
+      this.telegram.on(message("sticker"), (ctx) => ctx.reply("👍"));
+      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
+      this.telegram.command("exit", (ctx) => this.handleExitCommand(ctx));
+      this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
+      this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
+      this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
+      this.telegram.command("status", (ctx) => this.handleStatusCommand(ctx));
+      this.telegram.command("positions", (ctx) =>
+        this.handlePositionsCommand(ctx),
+      );
+      this.telegram.command("whoami", (ctx) =>
+        ctx.reply(JSON.stringify(ctx.update)),
+      );
+      this.telegram.hears(/\/(.+)/, (ctx) => {
+        const cmd = ctx.match[1];
+        return ctx.reply(
+          `command not found: '/${cmd}'. Type '/help' for help.`,
+        );
+      });
+      this.telegram.hears(/(.+)/, (ctx) =>
+        ctx.reply(
+          `Hello ${ctx.message.from.username}. What do you mean by '${ctx.text}'? 🧐`,
+        ),
+      );
+    }
   }
 
   private toString(): string {
@@ -191,12 +217,25 @@ Budget: ${this.budget}`;
       CommandContextExtn,
   ): Promise<void> {
     gLogger.debug(
-      "MyTradingBotApp.handlePauseCommand",
+      "MyTradingBotApp.handleEventCommand",
       "Handle 'event' command",
     );
     if (ctx.payload) {
       const arg = ctx.payload.trim().replaceAll("  ", " ").toLowerCase();
-      this.nextEvent = arg == "now" ? Date.now() : new Date(arg).getTime();
+      let event;
+      switch (arg) {
+        case "now":
+          event = Date.now();
+          break;
+        case "none":
+        case "off":
+        case "undefined":
+          event = undefined;
+          break;
+        default:
+          event = new Date(arg).getTime();
+      }
+      this.nextEvent = event;
     }
     await ctx
       .reply(
@@ -205,6 +244,56 @@ Budget: ${this.budget}`;
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),
       );
+  }
+
+  private async handlePositionsCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handlePositionsCommand",
+      "Handle 'positions' command",
+    );
+    try {
+      if (this.globalStatus[LegType.Put]?.position) {
+        console.log(LegType.Put);
+        const output = formatObject(this.globalStatus[LegType.Put]?.position);
+        console.log(output);
+        await ctx
+          .reply(output)
+          .catch((err: Error) =>
+            gLogger.error(
+              "MyTradingBotApp.handlePositionsCommand",
+              err.message,
+            ),
+          );
+      }
+      if (this.globalStatus[LegType.Call]?.position) {
+        console.log(LegType.Call);
+        const output = formatObject(this.globalStatus[LegType.Call]?.position);
+        console.log(output);
+        await ctx
+          .reply(output)
+          .catch((err: Error) =>
+            gLogger.error(
+              "MyTradingBotApp.handlePositionsCommand",
+              err.message,
+            ),
+          );
+      }
+    } catch (err) {
+      console.error(err);
+      gLogger.log(
+        LogLevel.Error,
+        "MyTradingBotApp.handlePositionsCommand",
+        undefined,
+        err,
+      );
+    }
   }
 
   private async handleExitCommand(
@@ -221,14 +310,13 @@ Budget: ${this.budget}`;
   }
 
   public async start(): Promise<void> {
-    // console.log("connecting to IG");
     const session = await this.api.rest.login.createSession(
       this.config.get("ig-api.username"),
       this.config.get("ig-api.password"),
     );
     gLogger.info(
       "MyTradingBotApp.start",
-      `IG client ID is "${session.clientId}".`,
+      `Client ID is "${session.clientId}".`,
     );
     gLogger.debug(
       "MyTradingBotApp.start",
@@ -243,7 +331,7 @@ Budget: ${this.budget}`;
       });
     }, 60_000);
 
-    await this.telegram.launch(); // WARNING: this call never returns
+    await this.telegram?.launch(); // WARNING: this call never returns
   }
 
   private async getDailyOptionsOf(market: string): Promise<Market[]> {
@@ -266,6 +354,7 @@ Budget: ${this.budget}`;
 
   private async getUnderlyingPrice(underlying: string): Promise<number> {
     const markets = (await this.api.searchMarkets(underlying)).markets;
+    // console.log(markets);
     const sum = markets.reduce(
       (p, v) => (v.bid && v.offer ? p + v.bid + v.offer : p),
       0,
@@ -312,20 +401,21 @@ Budget: ${this.budget}`;
   }
 
   private async check(): Promise<void> {
-    gLogger.trace(
-      "MyTradingBotApp.refreshTraders",
+    gLogger.debug(
+      "MyTradingBotApp.check",
       this.pauseMode ? "paused" : "running",
+      this.globalStatus.status,
     );
-    if (this.pauseMode || !this.nextEvent) return;
+    if (this.pauseMode) return;
 
     const now = Date.now();
-    if (this.status == StatusType.Idle) {
+    if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
       if (now > this.nextEvent - this.delay * 60_000) {
         gLogger.info("MyTradingBotApp.check", "Time for trading!");
         this.nextEvent = undefined;
 
         // Place an entry order
-        this.status = StatusType.Entering;
+        this.globalStatus.status = StatusType.Dealing;
         // Fetch 0 DTE options list
         const options = await this.getDailyOptionsOf(
           this.config.get("trader.market"),
@@ -335,41 +425,131 @@ Budget: ${this.budget}`;
           this.config.get("trader.underlying"),
         );
         // Get delta distance put and call
-        const contracts = this.findEntryContract(options, price);
-        console.log("contracts", contracts);
+        const twoLegsContracts = this.findEntryContract(options, price);
+        // console.log("contracts", twoLegsContracts);
+        const size =
+          Math.floor(
+            (this.budget * 100) /
+              (twoLegsContracts.put.offer! + twoLegsContracts.call.offer!),
+          ) / 100;
 
-        let size: number;
-        size = Math.floor(this.budget * 50 * contracts.put.offer!) / 100;
         gLogger.info(
           "MyTradingBotApp.check",
-          `Buy ${size} ${contracts.put.instrumentName} @ ${contracts.put.offer} USD`,
+          `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} USD`,
         );
-        const x = await this.api.createPosition(
-          contracts.put.epic,
+        const putRef = await this.api.createPosition(
+          twoLegsContracts.put.epic,
           "USD",
-          0.01,
-          contracts.put.offer!,
+          size,
+          twoLegsContracts.put.offer! * 2, // To make sure to be executed even in case of price change
+          twoLegsContracts.put.expiry,
         );
-        console.log(x);
-        size = Math.floor(this.budget * 50 * contracts.call.offer!) / 100;
+        this.globalStatus.put = {
+          contract: twoLegsContracts.put,
+          dealReference: putRef,
+          dealConfirmation: undefined,
+          position: undefined,
+        };
+
         gLogger.info(
           "MyTradingBotApp.check",
-          `Buy ${size} ${contracts.call.instrumentName} @ ${contracts.put.offer} USD`,
+          `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} USD`,
         );
-        const y = await this.api.createPosition(
-          contracts.call.epic,
+        const callRef = await this.api.createPosition(
+          twoLegsContracts.call.epic,
           "USD",
-          0.01,
-          contracts.call.offer!,
+          size,
+          twoLegsContracts.call.offer! * 2, // To make sure to be executed even in case of price change
+          twoLegsContracts.call.expiry,
         );
-        console.log(y);
+        this.globalStatus.call = {
+          contract: twoLegsContracts.call,
+          dealReference: callRef,
+          dealConfirmation: undefined,
+          position: undefined,
+        };
       } else {
-        gLogger.info(
-          "MyTradingBotApp.check",
-          `${Math.ceil((this.nextEvent - this.delay * 60_000 - now) / 60_000)} min(s) before trading`,
+        const mins = Math.ceil(
+          (this.nextEvent - this.delay * 60_000 - now) / 60_000,
         );
+        if (mins >= 60 && mins % 60 == 0) {
+          gLogger.info(
+            "MyTradingBotApp.check",
+            `${mins / 60} hour(s) before trading`,
+          );
+        } else {
+          let display = false;
+          if (mins >= 10 && mins % 10 == 0) display = true;
+          else if (mins <= 10) display = true;
+          if (display)
+            gLogger.info(
+              "MyTradingBotApp.check",
+              `${mins} min(s) before trading`,
+            );
+        }
       }
+    } else if (this.globalStatus.status == StatusType.Dealing) {
+      if (
+        this.globalStatus.put &&
+        this.globalStatus.put.dealReference &&
+        !this.globalStatus.put.dealConfirmation
+      ) {
+        this.globalStatus.put.dealConfirmation = await this.api.tradeConfirm(
+          this.globalStatus.put.dealReference,
+        );
+        if (
+          this.globalStatus.put.dealConfirmation.dealStatus !=
+          DealStatus.ACCEPTED
+        )
+          gLogger.error(
+            "MyTradingBotApp.check",
+            `Failed to place Put order: ${this.globalStatus.put.dealConfirmation.reason}`,
+          );
+      }
+      if (
+        this.globalStatus.call &&
+        this.globalStatus.call.dealReference &&
+        !this.globalStatus.call.dealConfirmation
+      ) {
+        this.globalStatus.call.dealConfirmation = await this.api.tradeConfirm(
+          this.globalStatus.call.dealReference,
+        );
+        if (
+          this.globalStatus.call.dealConfirmation.dealStatus !=
+          DealStatus.ACCEPTED
+        )
+          gLogger.error(
+            "MyTradingBotApp.check",
+            `Failed to place Call order: ${this.globalStatus.call.dealConfirmation.reason}`,
+          );
+      }
+      if (
+        this.globalStatus.put?.dealConfirmation &&
+        this.globalStatus.call?.dealConfirmation
+      ) {
+        this.globalStatus.status = StatusType.Position;
+      }
+    } else if (this.globalStatus.status == StatusType.Position) {
+      const positions = (await this.api.getPositions()).positions;
+      // console.log(positions);
+      let position;
+      position = positions.find(
+        (item) =>
+          item.position.dealReference ==
+          this.globalStatus.put!.dealConfirmation!.dealReference,
+      );
+      this.globalStatus.put!.position = position?.position;
+      if (position) this.globalStatus.put!.contract = position.market;
+      position = positions.find(
+        (item) =>
+          item.position.dealReference ==
+          this.globalStatus.call!.dealConfirmation!.dealReference,
+      );
+      this.globalStatus.call!.position = position?.position;
+      if (position) this.globalStatus.call!.contract = position.market;
     }
+
+    console.log(this.globalStatus);
   }
 
   public stop(): void {
@@ -380,7 +560,7 @@ Budget: ${this.budget}`;
 
   public exit(signal?: string): void {
     this.stop();
-    this.telegram.stop(signal);
+    this.telegram?.stop(signal);
     process.exit();
   }
 }

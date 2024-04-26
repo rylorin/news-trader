@@ -1,5 +1,12 @@
 {
   "gLogger": {
     "console": "info"
+  },
+  "telegram": {
+    "apiKey": "replace with your telegram bot api key",
+    "console": false
+  },
+  "trader": {
+    "budget": 50
   }
 }

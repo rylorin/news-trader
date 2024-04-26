@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  bot:
+    image: rylorin/news-trader:dev
+    environment:
+      IG_API_KEY: ${IG_API_KEY}
+      IG_API_USERNAME: ${IG_API_USERNAME}
+      IG_API_PASSWORD: ${IG_API_PASSWORD}
+      TELEGRAM_API_KEY: ${TELEGRAM_API_KEY}
+    restart: unless-stopped
+    networks:
+      - default
+    deploy:
+      placement:
+        constraints:
+          - node.platform.os == linux
+          - node.role == manager
+      replicas: 1
+    configs:
+      - source: news-trader.conf
+        target: /root/config/local.json
+
+networks:
+  default:
+
+configs:
+  news-trader.conf:
+    external: true
