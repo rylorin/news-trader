@@ -32,6 +32,8 @@ const LegType = {
 } as const;
 type LegType = (typeof LegType)[keyof typeof LegType];
 
+const legtypes: LegType[] = [LegType.Put, LegType.Call];
+
 type LegDealStatus = {
   contract: Market;
   dealReference: string | undefined;
@@ -92,11 +94,12 @@ export class MyTradingBotApp {
       this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
       this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
       this.telegram.command("status", (ctx) => this.handleStatusCommand(ctx));
+      this.telegram.command("state", (ctx) => this.handleStateCommand(ctx));
       this.telegram.command("positions", (ctx) =>
         this.handlePositionsCommand(ctx),
       );
       this.telegram.command("whoami", (ctx) =>
-        ctx.reply(JSON.stringify(ctx.update)),
+        ctx.reply(formatObject(ctx.update)),
       );
       this.telegram.hears(/\/(.+)/, (ctx) => {
         const cmd = ctx.match[1];
@@ -259,32 +262,26 @@ Budget: ${this.budget}`;
       "Handle 'positions' command",
     );
     try {
-      if (this.globalStatus[LegType.Put]?.position) {
-        console.log(LegType.Put);
-        const output = formatObject(this.globalStatus[LegType.Put]?.position);
-        console.log(output);
-        await ctx
-          .reply(output)
-          .catch((err: Error) =>
-            gLogger.error(
-              "MyTradingBotApp.handlePositionsCommand",
-              err.message,
-            ),
-          );
-      }
-      if (this.globalStatus[LegType.Call]?.position) {
-        console.log(LegType.Call);
-        const output = formatObject(this.globalStatus[LegType.Call]?.position);
-        console.log(output);
-        await ctx
-          .reply(output)
-          .catch((err: Error) =>
-            gLogger.error(
-              "MyTradingBotApp.handlePositionsCommand",
-              err.message,
-            ),
-          );
-      }
+      await legtypes.reduce(
+        (p, leg) =>
+          p.then(() => {
+            // console.log(leg);
+            const output = formatObject(
+              this.globalStatus[LegType.Call]?.position,
+            );
+            // console.log(output);
+            return ctx
+              .reply(leg + ": " + output)
+              .then(() => undefined)
+              .catch((err: Error) =>
+                gLogger.error(
+                  "MyTradingBotApp.handlePositionsCommand",
+                  err.message,
+                ),
+              );
+          }),
+        Promise.resolve(),
+      );
     } catch (err) {
       console.error(err);
       gLogger.log(
@@ -293,6 +290,34 @@ Budget: ${this.budget}`;
         undefined,
         err,
       );
+    }
+  }
+
+  private async handleStateCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleStateCommand",
+      "Handle 'state' command",
+    );
+    try {
+      if (ctx.payload) {
+        this.globalStatus = JSON.parse(ctx.payload);
+      }
+      // console.log(ctx);
+      await ctx
+        .reply("/" + ctx.command + " " + JSON.stringify(this.globalStatus))
+        .catch((err: Error) =>
+          gLogger.error("MyTradingBotApp.handleStateCommand", err.message),
+        );
+    } catch (error) {
+      console.error(error);
+      gLogger.error("MyTradingBotApp.handleStateCommand", formatObject(error));
     }
   }
 
@@ -400,6 +425,195 @@ Budget: ${this.budget}`;
     return { put, call };
   }
 
+  private async processIdleState() {
+    const now = Date.now();
+    if (now > this.nextEvent! - this.delay * 60_000) {
+      gLogger.info("MyTradingBotApp.check", "Time for trading!");
+      this.nextEvent = undefined;
+
+      // Place an entry order
+      this.globalStatus.status = StatusType.Dealing;
+      // Fetch 0 DTE options list
+      const options = await this.getDailyOptionsOf(
+        this.config.get("trader.market"),
+      );
+      // Get underlying price
+      const price = await this.getUnderlyingPrice(
+        this.config.get("trader.underlying"),
+      );
+      // Get delta distance put and call
+      const twoLegsContracts = this.findEntryContract(options, price);
+      // console.log("contracts", twoLegsContracts);
+      const size =
+        Math.floor(
+          (this.budget * 100) /
+            (twoLegsContracts.put.offer! + twoLegsContracts.call.offer!),
+        ) / 100;
+
+      gLogger.info(
+        "MyTradingBotApp.check",
+        `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} USD`,
+      );
+      const putRef = await this.api.createPosition(
+        twoLegsContracts.put.epic,
+        "USD",
+        size,
+        twoLegsContracts.put.offer! * 2, // To make sure to be executed even in case of price change
+        twoLegsContracts.put.expiry,
+      );
+      this.globalStatus.put = {
+        contract: twoLegsContracts.put,
+        dealReference: putRef,
+        dealConfirmation: undefined,
+        position: undefined,
+      };
+
+      gLogger.info(
+        "MyTradingBotApp.check",
+        `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} USD`,
+      );
+      const callRef = await this.api.createPosition(
+        twoLegsContracts.call.epic,
+        "USD",
+        size,
+        twoLegsContracts.call.offer! * 2, // To make sure to be executed even in case of price change
+        twoLegsContracts.call.expiry,
+      );
+      this.globalStatus.call = {
+        contract: twoLegsContracts.call,
+        dealReference: callRef,
+        dealConfirmation: undefined,
+        position: undefined,
+      };
+    } else {
+      // Display count down
+      const mins = Math.ceil(
+        (this.nextEvent! - this.delay * 60_000 - now) / 60_000,
+      );
+      // console.log(mins, mins % 60);
+      if (mins >= 60 && mins % 60 == 0) {
+        gLogger.info(
+          "MyTradingBotApp.check",
+          `${mins / 60} hour(s) before trading`,
+        );
+      } else {
+        let display = false;
+        if (mins >= 10 && mins % 10 == 0) display = true;
+        else if (mins <= 10) display = true;
+        if (display)
+          gLogger.info(
+            "MyTradingBotApp.check",
+            `${mins} min(s) before trading`,
+          );
+      }
+    }
+  }
+
+  private async processDealingState() {
+    if (
+      this.globalStatus.put &&
+      this.globalStatus.put.dealReference &&
+      !this.globalStatus.put.dealConfirmation
+    ) {
+      this.globalStatus.put.dealConfirmation = await this.api.tradeConfirm(
+        this.globalStatus.put.dealReference,
+      );
+      if (
+        this.globalStatus.put.dealConfirmation.dealStatus != DealStatus.ACCEPTED
+      )
+        gLogger.error(
+          "MyTradingBotApp.check",
+          `Failed to place Put entry order: ${this.globalStatus.put.dealConfirmation.reason}`,
+        );
+    }
+    if (
+      this.globalStatus.call &&
+      this.globalStatus.call.dealReference &&
+      !this.globalStatus.call.dealConfirmation
+    ) {
+      this.globalStatus.call.dealConfirmation = await this.api.tradeConfirm(
+        this.globalStatus.call.dealReference,
+      );
+      if (
+        this.globalStatus.call.dealConfirmation.dealStatus !=
+        DealStatus.ACCEPTED
+      )
+        gLogger.error(
+          "MyTradingBotApp.check",
+          `Failed to place Call entry order: ${this.globalStatus.call.dealConfirmation.reason}`,
+        );
+    }
+    if (
+      this.globalStatus.put?.dealConfirmation?.dealStatus ==
+        DealStatus.ACCEPTED &&
+      this.globalStatus.call?.dealConfirmation?.dealStatus ==
+        DealStatus.ACCEPTED
+    ) {
+      this.globalStatus.status = StatusType.Position;
+    }
+  }
+
+  private async processPositionState() {
+    // Update positions
+    const positions = (await this.api.getPositions()).positions;
+    // console.log(positions);
+    let position;
+    position = positions.find(
+      (item) =>
+        item.position.dealReference ==
+        this.globalStatus.put!.dealConfirmation!.dealReference,
+    );
+    this.globalStatus.put!.position = position?.position;
+    if (position) this.globalStatus.put!.contract = position.market;
+    position = positions.find(
+      (item) =>
+        item.position.dealReference ==
+        this.globalStatus.call!.dealConfirmation!.dealReference,
+    );
+    this.globalStatus.call!.position = position?.position;
+    if (position) this.globalStatus.call!.contract = position.market;
+
+    // Wait for a winning leg
+    if (!this.globalStatus.winningLeg) {
+      await legtypes.reduce(
+        (p, leg) =>
+          p.then(() => {
+            const legData: LegDealStatus = this.globalStatus[leg]!;
+            if (legData.contract!.bid! > legData.dealConfirmation!.level * 2) {
+              this.globalStatus.winningLeg = leg;
+              gLogger.info(
+                "MyTradingBotApp.check",
+                `${leg} becomes winning leg, sell 50% of position`,
+              );
+              return this.api
+                .closePosition(
+                  legData.position!.dealId,
+                  legData.contract!.epic,
+                  Math.round(legData.position!.size * 50) / 100,
+                  legData.contract!.bid! / 2,
+                )
+                .then((dealReference) => this.api.tradeConfirm(dealReference))
+                .then((dealConfirmation) => {
+                  gLogger.info(
+                    "MyTradingBotApp.check",
+                    formatObject(dealConfirmation),
+                  );
+                });
+            } else if (
+              legData.contract!.bid! <
+              legData.dealConfirmation!.level * 0.5
+            ) {
+              gLogger.info(
+                "MyTradingBotApp.check",
+                `${leg} potentially loosing leg!`,
+              );
+            }
+          }),
+        Promise.resolve(),
+      );
+    }
+  }
+
   private async check(): Promise<void> {
     gLogger.debug(
       "MyTradingBotApp.check",
@@ -408,148 +622,15 @@ Budget: ${this.budget}`;
     );
     if (this.pauseMode) return;
 
-    const now = Date.now();
     if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
-      if (now > this.nextEvent - this.delay * 60_000) {
-        gLogger.info("MyTradingBotApp.check", "Time for trading!");
-        this.nextEvent = undefined;
-
-        // Place an entry order
-        this.globalStatus.status = StatusType.Dealing;
-        // Fetch 0 DTE options list
-        const options = await this.getDailyOptionsOf(
-          this.config.get("trader.market"),
-        );
-        // Get underlying price
-        const price = await this.getUnderlyingPrice(
-          this.config.get("trader.underlying"),
-        );
-        // Get delta distance put and call
-        const twoLegsContracts = this.findEntryContract(options, price);
-        // console.log("contracts", twoLegsContracts);
-        const size =
-          Math.floor(
-            (this.budget * 100) /
-              (twoLegsContracts.put.offer! + twoLegsContracts.call.offer!),
-          ) / 100;
-
-        gLogger.info(
-          "MyTradingBotApp.check",
-          `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} USD`,
-        );
-        const putRef = await this.api.createPosition(
-          twoLegsContracts.put.epic,
-          "USD",
-          size,
-          twoLegsContracts.put.offer! * 2, // To make sure to be executed even in case of price change
-          twoLegsContracts.put.expiry,
-        );
-        this.globalStatus.put = {
-          contract: twoLegsContracts.put,
-          dealReference: putRef,
-          dealConfirmation: undefined,
-          position: undefined,
-        };
-
-        gLogger.info(
-          "MyTradingBotApp.check",
-          `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} USD`,
-        );
-        const callRef = await this.api.createPosition(
-          twoLegsContracts.call.epic,
-          "USD",
-          size,
-          twoLegsContracts.call.offer! * 2, // To make sure to be executed even in case of price change
-          twoLegsContracts.call.expiry,
-        );
-        this.globalStatus.call = {
-          contract: twoLegsContracts.call,
-          dealReference: callRef,
-          dealConfirmation: undefined,
-          position: undefined,
-        };
-      } else {
-        const mins = Math.ceil(
-          (this.nextEvent - this.delay * 60_000 - now) / 60_000,
-        );
-        if (mins >= 60 && mins % 60 == 0) {
-          gLogger.info(
-            "MyTradingBotApp.check",
-            `${mins / 60} hour(s) before trading`,
-          );
-        } else {
-          let display = false;
-          if (mins >= 10 && mins % 10 == 0) display = true;
-          else if (mins <= 10) display = true;
-          if (display)
-            gLogger.info(
-              "MyTradingBotApp.check",
-              `${mins} min(s) before trading`,
-            );
-        }
-      }
+      await this.processIdleState();
     } else if (this.globalStatus.status == StatusType.Dealing) {
-      if (
-        this.globalStatus.put &&
-        this.globalStatus.put.dealReference &&
-        !this.globalStatus.put.dealConfirmation
-      ) {
-        this.globalStatus.put.dealConfirmation = await this.api.tradeConfirm(
-          this.globalStatus.put.dealReference,
-        );
-        if (
-          this.globalStatus.put.dealConfirmation.dealStatus !=
-          DealStatus.ACCEPTED
-        )
-          gLogger.error(
-            "MyTradingBotApp.check",
-            `Failed to place Put order: ${this.globalStatus.put.dealConfirmation.reason}`,
-          );
-      }
-      if (
-        this.globalStatus.call &&
-        this.globalStatus.call.dealReference &&
-        !this.globalStatus.call.dealConfirmation
-      ) {
-        this.globalStatus.call.dealConfirmation = await this.api.tradeConfirm(
-          this.globalStatus.call.dealReference,
-        );
-        if (
-          this.globalStatus.call.dealConfirmation.dealStatus !=
-          DealStatus.ACCEPTED
-        )
-          gLogger.error(
-            "MyTradingBotApp.check",
-            `Failed to place Call order: ${this.globalStatus.call.dealConfirmation.reason}`,
-          );
-      }
-      if (
-        this.globalStatus.put?.dealConfirmation &&
-        this.globalStatus.call?.dealConfirmation
-      ) {
-        this.globalStatus.status = StatusType.Position;
-      }
+      await this.processDealingState();
     } else if (this.globalStatus.status == StatusType.Position) {
-      const positions = (await this.api.getPositions()).positions;
-      // console.log(positions);
-      let position;
-      position = positions.find(
-        (item) =>
-          item.position.dealReference ==
-          this.globalStatus.put!.dealConfirmation!.dealReference,
-      );
-      this.globalStatus.put!.position = position?.position;
-      if (position) this.globalStatus.put!.contract = position.market;
-      position = positions.find(
-        (item) =>
-          item.position.dealReference ==
-          this.globalStatus.call!.dealConfirmation!.dealReference,
-      );
-      this.globalStatus.call!.position = position?.position;
-      if (position) this.globalStatus.call!.contract = position.market;
+      await this.processPositionState();
     }
 
-    console.log(this.globalStatus);
+    gLogger.trace("MyTradingBotApp.check", this.globalStatus);
   }
 
   public stop(): void {

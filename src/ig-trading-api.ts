@@ -9,10 +9,12 @@ import {
   MarketSearch,
   OauthToken,
   Position,
+  PositionCloseRequest,
   PositionCreateRequest,
   PositionListResponse,
   PositionOrderType,
   PositionTimeInForce,
+  Resolution,
   TradingSession,
 } from "ig-trading-api";
 import { LogLevel, gLogger } from "./logger";
@@ -25,8 +27,10 @@ enum IgApiEndpoint {
   GetMarket,
   GetMarkets,
   SearchMarkets,
+  GetHitoryPrices,
   GetAccounts,
   CreatePosition,
+  ClosePosition,
   TradeConfirm,
   GetPosition,
   GetPositions,
@@ -66,12 +70,20 @@ const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
     method: "get",
     url: "/markets",
   },
+  [IgApiEndpoint.GetHitoryPrices]: {
+    method: "get",
+    url: "/prices/{epic}/{resolution}/{startDate}/{endDate}/",
+  },
   [IgApiEndpoint.GetAccounts]: {
     method: "get",
     url: "/accounts",
   },
   [IgApiEndpoint.CreatePosition]: {
     method: "post",
+    url: "/positions/otc",
+  },
+  [IgApiEndpoint.ClosePosition]: {
+    method: "delete",
     url: "/positions/otc",
   },
   [IgApiEndpoint.TradeConfirm]: {
@@ -86,6 +98,35 @@ const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
     method: "get",
     url: "/positions",
   },
+};
+
+/**
+ * Convert a Javascript Date to string format YYYY-MM-DDTHH:MM:SS (UTC)
+ * @param {Date} datetime date to convert
+ * @returns datetime converted as a string
+ */
+const dateToString = (datetime: Date): string => {
+  const value = datetime.toISOString();
+  const year = parseInt(value.substring(0, 4));
+  const month = parseInt(value.substring(5, 7));
+  const day = parseInt(value.substring(8, 10));
+  const hours = parseInt(value.substring(11, 13));
+  const mins = parseInt(value.substring(14, 16));
+  const secs = parseInt(value.substring(17, 19));
+
+  const date: string =
+    year.toString() +
+    "-" +
+    (month < 10 ? "0" + month : month) +
+    "-" +
+    (day < 10 ? "0" + day : day);
+  const time: string =
+    (hours < 10 ? "0" + hours : hours) +
+    ":" +
+    (mins < 10 ? "0" + mins : mins) +
+    ":" +
+    (secs < 10 ? "0" + secs : secs);
+  return date + "T" + time;
 };
 
 export class APIClient {
@@ -288,6 +329,31 @@ export class APIClient {
     }) as Promise<MarketSearch>;
   }
 
+  public getHistoryPrices(
+    epic: string,
+    resolution: Resolution,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<MarketSearch> {
+    gLogger.debug(
+      "IgApiConnection.getHistoryPrices",
+      epic,
+      resolution,
+      startDate,
+      endDate,
+    );
+    return this.call(
+      IgApiEndpoint.GetHitoryPrices,
+      {
+        epic,
+        resolution,
+        startDate: dateToString(startDate),
+        endDate: dateToString(endDate),
+      },
+      { Version: "2" },
+    ) as Promise<MarketSearch>;
+  }
+
   public getAccounts(): Promise<AccountsResponse> {
     gLogger.debug("IgApiConnection.getAccounts");
     return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
@@ -317,6 +383,33 @@ export class APIClient {
       this.call(IgApiEndpoint.CreatePosition, createPositionRequest, {
         Version: "2",
       }) as Promise<DealReferenceResponse>
+    ).then((response: DealReferenceResponse) => response.dealReference);
+  }
+
+  public closePosition(
+    dealId: string,
+    epic: string,
+    size: number,
+    level: number,
+    expiry = "-",
+  ): Promise<string> {
+    gLogger.debug("IgApiConnection.createPosition");
+    const closePositionRequest: PositionCloseRequest = {
+      dealId,
+      direction: Direction.SELL,
+      epic,
+      expiry,
+      level,
+      orderType: PositionOrderType.LIMIT,
+      // quoteId
+      size,
+      timeInForce: PositionTimeInForce.EXECUTE_AND_ELIMINATE,
+    };
+    return (
+      this.call(
+        IgApiEndpoint.ClosePosition,
+        closePositionRequest,
+      ) as Promise<DealReferenceResponse>
     ).then((response: DealReferenceResponse) => response.dealReference);
   }
 
