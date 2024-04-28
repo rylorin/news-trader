@@ -23,6 +23,7 @@ enum IgApiEndpoint {
   CreateSession,
   GetSession,
   RefreshSession,
+  Logout,
   GetMarketNavigation,
   GetMarket,
   GetMarkets,
@@ -53,6 +54,10 @@ const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
   [IgApiEndpoint.RefreshSession]: {
     method: "post",
     url: "/session/refresh-token",
+  },
+  [IgApiEndpoint.Logout]: {
+    method: "delete",
+    url: "/session",
   },
   [IgApiEndpoint.GetMarketNavigation]: {
     method: "get",
@@ -146,7 +151,7 @@ export class APIClient {
         identifier: string,
         password: string,
       ): Promise<TradingSession> => this.createSession(identifier, password),
-      logout: () => undefined,
+      logout: () => this.disconnect(),
     },
   };
 
@@ -288,9 +293,10 @@ export class APIClient {
       .catch((error) => console.error(error));
   }
 
-  public disconnect() {
+  public disconnect(): Promise<void> {
     if (this.keepalive) clearInterval(this.keepalive);
     this.keepalive = undefined;
+    return this.call(IgApiEndpoint.Logout).then(() => undefined);
   }
 
   public getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
