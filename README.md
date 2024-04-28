@@ -1,2 +1,3 @@
 # news-trader
-Economic events trading bot on IG broker
+
+Trade index vanilla options on Economic events on IG broker

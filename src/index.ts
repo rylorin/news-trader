@@ -29,7 +29,7 @@ export class MyTradingBotApp {
   constructor(config: IConfig) {
     this.config = config;
 
-    this.pauseMode = string2boolean(this.config.get("trader.pause"));
+    this.pauseMode = string2boolean(this.config.get("bot.pause"));
     this.trader = new Trader(config);
 
     if (this.config.get("telegram.apiKey")) {
@@ -296,13 +296,19 @@ ${this.trader.toString()}`;
   }
 
   private async check(): Promise<void> {
-    gLogger.debug(
+    gLogger.trace(
       "MyTradingBotApp.check",
       this.pauseMode ? "paused" : "running",
     );
-    if (this.pauseMode) return;
 
-    await this.trader.check();
+    // if (!this.trader.nextEvent && !this.trader.status) {
+    //   await fetch("https://www.investing.com/economic-calendar/")
+    //     .then((response) => response.text())
+    //     .then((text) => {console.log(text);
+    //     });
+    // }
+
+    if (!this.pauseMode) await this.trader.check();
   }
 
   public stop(): void {

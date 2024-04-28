@@ -8,6 +8,7 @@ services:
       IG_API_USERNAME: ${IG_API_USERNAME}
       IG_API_PASSWORD: ${IG_API_PASSWORD}
       TELEGRAM_API_KEY: ${TELEGRAM_API_KEY}
+      TZ: Europe/Paris
     restart: unless-stopped
     networks:
       - default

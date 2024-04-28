@@ -16,7 +16,7 @@ const StatusType = {
   Dealing: "Dealing",
   Position: "Position",
 } as const;
-type StatusType = (typeof StatusType)[keyof typeof StatusType];
+export type StatusType = (typeof StatusType)[keyof typeof StatusType];
 
 const LegType = {
   Put: "put",
@@ -104,6 +104,10 @@ Budget: ${this.budget}`;
   }
   public set globalStatus(text: string) {
     this._globalStatus = JSON.parse(text);
+  }
+
+  public get status(): StatusType {
+    return this._globalStatus.status;
   }
 
   public async start(): Promise<void> {
@@ -257,15 +261,23 @@ Budget: ${this.budget}`;
       const mins = Math.ceil(
         (this.nextEvent! - this.delay * 60_000 - now) / 60_000,
       );
+      const eventDelay = Math.ceil((this.nextEvent! - now) / 60_000);
       // console.log(mins, mins % 60);
-      if (mins >= 60 && mins % 60 == 0) {
-        gLogger.info("Trader.check", `${mins / 60} hour(s) before trading`);
+      if (eventDelay >= 60) {
+        if (eventDelay % 60 == 0)
+          gLogger.info(
+            "Trader.check",
+            `${eventDelay / 60} hour(s) before event`,
+          );
       } else {
         let display = false;
         if (mins >= 10 && mins % 10 == 0) display = true;
         else if (mins <= 10) display = true;
         if (display)
-          gLogger.info("Trader.check", `${mins} min(s) before trading`);
+          gLogger.info(
+            "Trader.check",
+            `${eventDelay} min(s) before event, ${mins} min(s) before trading`,
+          );
       }
     }
   }
@@ -370,7 +382,7 @@ Budget: ${this.budget}`;
   }
 
   public async check(): Promise<void> {
-    gLogger.debug("Trader.check", this.globalStatus.status);
+    gLogger.trace("Trader.check", this.globalStatus.status);
 
     if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
       await this.processIdleState();

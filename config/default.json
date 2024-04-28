@@ -14,8 +14,10 @@
     "apiKey": false,
     "console": false
   },
+  "bot": {
+    "pause": false
+  },
   "trader": {
-    "pause": false,
     "market": "Options (US Tech 100)",
     "underlying": "US Tech 100 Barrière",
     "delay": 5,

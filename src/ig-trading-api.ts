@@ -156,7 +156,7 @@ export class APIClient {
   };
 
   constructor(baseURL: string, apiKey: string) {
-    gLogger.debug("APIClient.constructor", baseURL, apiKey);
+    gLogger.trace("APIClient.constructor", baseURL, apiKey);
     this.apiKey = apiKey;
     this.api = axios.create({
       baseURL,
@@ -206,7 +206,7 @@ export class APIClient {
       case "put":
         return this.api.put(url, params, { headers });
       default:
-        throw Error("IgApiConnection.call: method not implemented!");
+        throw Error("ApiClient.call: method not implemented!");
     }
   }
 
@@ -226,27 +226,17 @@ export class APIClient {
         } else {
           gLogger.log(
             LogLevel.Error,
-            "IgApiConnection.call",
+            "ApiClient.call",
             undefined,
             response.statusText,
           );
-          gLogger.log(
-            LogLevel.Debug,
-            "IgApiConnection.call",
-            undefined,
-            response,
-          );
+          gLogger.log(LogLevel.Debug, "ApiClient.call", undefined, response);
           throw Error(response.statusText);
         }
       })
       .catch((error: AxiosError) => {
-        gLogger.log(
-          LogLevel.Error,
-          "IgApiConnection.call",
-          undefined,
-          error.message,
-        );
-        gLogger.log(LogLevel.Debug, "IgApiConnection.call", undefined, error);
+        gLogger.log(LogLevel.Error, "ApiClient.call", undefined, error.message);
+        gLogger.log(LogLevel.Debug, "ApiClient.call", undefined, error);
         throw error;
       });
   }
@@ -255,7 +245,7 @@ export class APIClient {
     identifier: string,
     password: string,
   ): Promise<TradingSession> {
-    gLogger.debug("IgApiConnection.createSession", "connecting");
+    gLogger.trace("ApiClient.createSession", "connecting");
     return this.call(
       IgApiEndpoint.CreateSession,
       {
@@ -276,14 +266,14 @@ export class APIClient {
   }
 
   private heartbeat() {
-    gLogger.trace("IgApiConnection.heartbeat");
+    gLogger.trace("ApiClient.heartbeat");
     (
       this.call(IgApiEndpoint.RefreshSession, {
         refresh_token: this.oauthToken!.refresh_token,
       }) as Promise<OauthToken>
     )
       .then((response) => {
-        gLogger.trace("IgApiConnection.heartbeat", response);
+        gLogger.trace("ApiClient.heartbeat", response);
         this.oauthToken = response;
         this.keepalive = setTimeout(
           () => this.heartbeat(),
@@ -300,14 +290,14 @@ export class APIClient {
   }
 
   public getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.getMarketNavigation", nodeId);
+    gLogger.trace("APIClient.getMarketNavigation", nodeId);
     return this.call(IgApiEndpoint.GetMarketNavigation, {
       nodeId,
     }) as Promise<MarketNavigation>;
   }
 
   public getMarket(epic?: string): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.getMarket", epic);
+    gLogger.trace("APIClient.getMarket", epic);
     return this.call(
       IgApiEndpoint.GetMarket,
       {
@@ -318,7 +308,7 @@ export class APIClient {
   }
 
   public getMarkets(epics: string[]): Promise<MarketNavigation> {
-    gLogger.debug("IgApiConnection.getMarkets", epics);
+    gLogger.trace("APIClient.getMarkets", epics);
     return this.call(
       IgApiEndpoint.GetMarkets,
       {
@@ -329,7 +319,7 @@ export class APIClient {
   }
 
   public searchMarkets(searchTerm: string): Promise<MarketSearch> {
-    gLogger.debug("IgApiConnection.searchMarkets", searchTerm);
+    gLogger.trace("APIClient.searchMarkets", searchTerm);
     return this.call(IgApiEndpoint.SearchMarkets, {
       searchTerm,
     }) as Promise<MarketSearch>;
@@ -342,7 +332,7 @@ export class APIClient {
     endDate: Date,
   ): Promise<MarketSearch> {
     gLogger.debug(
-      "IgApiConnection.getHistoryPrices",
+      "ApiClient.getHistoryPrices",
       epic,
       resolution,
       startDate,
@@ -361,7 +351,7 @@ export class APIClient {
   }
 
   public getAccounts(): Promise<AccountsResponse> {
-    gLogger.debug("IgApiConnection.getAccounts");
+    gLogger.trace("APIClient.getAccounts");
     return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
   }
 
@@ -372,7 +362,7 @@ export class APIClient {
     level: number,
     expiry = "-",
   ): Promise<string> {
-    gLogger.debug("IgApiConnection.createPosition");
+    gLogger.trace("APIClient.createPosition");
     const createPositionRequest: PositionCreateRequest = {
       epic,
       direction: Direction.BUY,
@@ -399,7 +389,7 @@ export class APIClient {
     level: number,
     expiry = "-",
   ): Promise<string> {
-    gLogger.debug("IgApiConnection.createPosition");
+    gLogger.trace("APIClient.createPosition");
     const closePositionRequest: PositionCloseRequest = {
       dealId,
       direction: Direction.SELL,
@@ -420,14 +410,14 @@ export class APIClient {
   }
 
   public tradeConfirm(dealReference: string): Promise<DealConfirmation> {
-    gLogger.debug("IgApiConnection.tradeConfirm", dealReference);
+    gLogger.trace("APIClient.tradeConfirm", dealReference);
     return this.call(IgApiEndpoint.TradeConfirm, {
       dealReference,
     }) as Promise<DealConfirmation>;
   }
 
   public getPosition(dealId?: string): Promise<Position> {
-    gLogger.debug("IgApiConnection.getPosition", dealId);
+    gLogger.trace("APIClient.getPosition", dealId);
     return this.call(
       IgApiEndpoint.GetPosition,
       {
@@ -440,7 +430,7 @@ export class APIClient {
   }
 
   public getPositions(): Promise<PositionListResponse> {
-    gLogger.debug("IgApiConnection.getPositions");
+    gLogger.trace("APIClient.getPositions");
     return this.call(
       IgApiEndpoint.GetPositions,
       {},
