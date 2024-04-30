@@ -177,7 +177,7 @@ ${this.trader.toString()}`;
     );
     if (ctx.payload) {
       const arg = ctx.payload.trim().replaceAll(" ", "");
-      this.trader.budget = parseInt(arg);
+      this.trader.budget = parseFloat(arg);
     }
     await ctx
       .reply(`/budget ${this.trader.budget}`)
@@ -222,9 +222,9 @@ ${this.trader.toString()}`;
       "Handle 'event' command",
     );
     if (ctx.payload) {
-      const arg = ctx.payload.trim().replaceAll("  ", " ").toLowerCase();
+      const arg = ctx.payload.trim().replaceAll("  ", " ");
       let event;
-      switch (arg) {
+      switch (arg.toLowerCase()) {
         case "now":
           event = Date.now();
           break;
@@ -234,7 +234,7 @@ ${this.trader.toString()}`;
           event = undefined;
           break;
         default:
-          event = new Date(arg).getTime();
+          event = new Date(arg.toUpperCase()).getTime();
       }
       this.trader.nextEvent = event;
     }
