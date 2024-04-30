@@ -47,6 +47,8 @@ export class Trader {
   private readonly config: IConfig;
   private readonly api;
   private readonly delay: number;
+  private _market: string;
+  private _currency: string;
   private _delta: number;
   private _budget: number;
   private _globalStatus: DealingStatus;
@@ -61,6 +63,8 @@ export class Trader {
       call: undefined,
       winningLeg: undefined,
     };
+    this._market = this.config.get("trader.market");
+    this._currency = this.config.get("trader.currency");
     this.delay = this.config.get("trader.delay");
     this._delta = this.config.get("trader.delta");
     this._budget = this.config.get("trader.budget");
@@ -72,10 +76,25 @@ export class Trader {
   }
 
   public toString(): string {
-    return `Market: ${this.config.get("trader.market")}
+    return `Market: ${this._market}
+Currency: ${this._currency}
 Next event: ${this.nextEvent ? new Date(this.nextEvent).toISOString() : "undefined"}
 Delta: ${this.delta}
 Budget: ${this.budget}`;
+  }
+
+  public get market(): string {
+    return this._market;
+  }
+  public set market(value: string) {
+    this._market = value;
+  }
+
+  public get currency(): string {
+    return this._currency;
+  }
+  public set currency(value: string) {
+    this._currency = value;
   }
 
   public get delta(): number {
@@ -187,16 +206,15 @@ Budget: ${this.budget}`;
     return { put, call };
   }
 
-  private async processIdleState() {
+  private async processIdleState(): Promise<void> {
     const now = Date.now();
-    if (now > this.nextEvent! - this.delay * 60_000) {
+    const eventDelay = Math.floor((this.nextEvent! - now) / 60_000); // in mins
+    if (eventDelay < 1) {
       gLogger.info("Trader.check", "Time for trading!");
       this.nextEvent = undefined;
 
       // Fetch 0 DTE options list
-      const options = await this.getDailyOptionsOf(
-        this.config.get("trader.market"),
-      );
+      const options = await this.getDailyOptionsOf(this._market);
       // Get underlying price
       const price = await this.getUnderlyingPrice(
         this.config.get("trader.underlying"),
@@ -217,11 +235,11 @@ Budget: ${this.budget}`;
 
         gLogger.info(
           "Trader.check",
-          `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} USD`,
+          `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} ${this._currency}`,
         );
         const putRef = await this.api.createPosition(
           twoLegsContracts.put.epic,
-          "USD",
+          this._currency,
           size,
           twoLegsContracts.put.offer! * 2, // To make sure to be executed even in case of price change
           twoLegsContracts.put.expiry,
@@ -235,11 +253,11 @@ Budget: ${this.budget}`;
 
         gLogger.info(
           "Trader.check",
-          `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} USD`,
+          `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} ${this._currency}`,
         );
         const callRef = await this.api.createPosition(
           twoLegsContracts.call.epic,
-          "USD",
+          this._currency,
           size,
           twoLegsContracts.call.offer! * 2, // To make sure to be executed even in case of price change
           twoLegsContracts.call.expiry,
@@ -258,31 +276,27 @@ Budget: ${this.budget}`;
       }
     } else {
       // Display count down
-      const mins = Math.ceil(
-        (this.nextEvent! - this.delay * 60_000 - now) / 60_000,
-      );
-      const eventDelay = Math.ceil((this.nextEvent! - now) / 60_000);
+      // const mins = Math.ceil(
+      //   (this.nextEvent! - this.delay * 60_000 - now) / 60_000,
+      // );
       // console.log(mins, mins % 60);
       if (eventDelay >= 60) {
         if (eventDelay % 60 == 0)
           gLogger.info(
             "Trader.check",
-            `${eventDelay / 60} hour(s) before event`,
+            `${eventDelay / 60} hour(s) before trading.`,
           );
       } else {
         let display = false;
-        if (mins >= 10 && mins % 10 == 0) display = true;
-        else if (mins <= 10) display = true;
+        if (eventDelay >= 10 && eventDelay % 10 == 0) display = true;
+        else if (eventDelay <= 10) display = true;
         if (display)
-          gLogger.info(
-            "Trader.check",
-            `${eventDelay} min(s) before event, ${mins} min(s) before trading`,
-          );
+          gLogger.info("Trader.check", `${eventDelay} min(s) before event.`);
       }
     }
   }
 
-  private async processDealingState() {
+  private async processDealingState(): Promise<void> {
     if (
       this.globalStatus.put &&
       this.globalStatus.put.dealReference &&
@@ -326,7 +340,7 @@ Budget: ${this.budget}`;
     }
   }
 
-  private async processPositionState() {
+  private async processPositionState(): Promise<void> {
     // Update positions
     const positions = (await this.api.getPositions()).positions;
     // console.log(positions);
@@ -392,22 +406,24 @@ Budget: ${this.budget}`;
       await this.processPositionState();
     }
 
+    const accounts = await this.api.getAccounts();
+    console.log(accounts.accounts[0]);
+
     gLogger.trace("Trader.check", this.globalStatus);
   }
 
-  public stop(): void {
-    this.api.rest.login.logout();
+  public stop(): Promise<void> {
+    return this.api.rest.login.logout();
   }
 
-  public getPositions(): Record<LegType, number> {
-    const result: Record<string, string> = {};
-    legtypes.reduce(
-      (p: Record<string, string>, leg: LegType) => {
-        p[leg] = formatObject(this.globalStatus[leg]?.position);
+  public getPositions(): Record<LegType, Position | undefined> {
+    const result = legtypes.reduce(
+      (p, leg: LegType) => {
+        p[leg] = this.globalStatus[leg]?.position;
         return p;
       },
-      {} as Record<string, string>,
+      {} as Record<LegType, Position | undefined>,
     );
-    return result as unknown as Record<LegType, number>;
+    return result;
   }
 }

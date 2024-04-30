@@ -38,8 +38,17 @@ export class MyTradingBotApp {
       this.telegram.start((ctx) => ctx.reply("Welcome"));
       this.telegram.help((ctx) => ctx.reply("Send me a sticker"));
       this.telegram.on(message("sticker"), (ctx) => ctx.reply("👍"));
-      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
+      // Bot commands
       this.telegram.command("exit", (ctx) => this.handleExitCommand(ctx));
+      this.telegram.command("whoami", (ctx) =>
+        ctx.reply(formatObject(ctx.update)),
+      );
+      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
+      // Trader settings commands
+      this.telegram.command("market", (ctx) => this.handleMarketCommand(ctx));
+      this.telegram.command("currency", (ctx) =>
+        this.handleCurrencyCommand(ctx),
+      );
       this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
       this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
       this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
@@ -48,9 +57,7 @@ export class MyTradingBotApp {
       this.telegram.command("positions", (ctx) =>
         this.handlePositionsCommand(ctx),
       );
-      this.telegram.command("whoami", (ctx) =>
-        ctx.reply(formatObject(ctx.update)),
-      );
+      // Catch-alls
       this.telegram.hears(/\/(.+)/, (ctx) => {
         const cmd = ctx.match[1];
         return ctx.reply(
@@ -68,6 +75,50 @@ export class MyTradingBotApp {
   private toString(): string {
     return `Pause: ${this.pauseMode ? "on" : "off"}
 ${this.trader.toString()}`;
+  }
+
+  private async handleMarketCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleMarketCommand",
+      "Handle 'market' command",
+    );
+    if (ctx.payload) {
+      this.trader.market = ctx.payload.trim();
+    }
+    await ctx
+      .reply(`/market ${this.trader.market}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleMarketCommand", err.message),
+      );
+  }
+
+  private async handleCurrencyCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleCurrencyCommand",
+      "Handle 'market' command",
+    );
+    if (ctx.payload) {
+      this.trader.currency = ctx.payload.trim().toUpperCase();
+    }
+    await ctx
+      .reply(`/currency ${this.trader.currency}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleCurrencyCommand", err.message),
+      );
   }
 
   private async handleStatusCommand(
@@ -106,7 +157,7 @@ ${this.trader.toString()}`;
       this.trader.delta = parseInt(arg);
     }
     await ctx
-      .reply(`Delta: ${this.trader.delta}`)
+      .reply(`/delta ${this.trader.delta}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleDeltaCommand", err.message),
       );
@@ -129,7 +180,7 @@ ${this.trader.toString()}`;
       this.trader.budget = parseInt(arg);
     }
     await ctx
-      .reply(`Budget: ${this.trader.budget}`)
+      .reply(`/budget ${this.trader.budget}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleBudgetCommand", err.message),
       );
@@ -152,7 +203,7 @@ ${this.trader.toString()}`;
       this.pauseMode = string2boolean(arg);
     }
     await ctx
-      .reply(`Pause mode is ${this.pauseMode ? "on" : "off"}`)
+      .reply(`/pause ${this.pauseMode ? "on" : "off"}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),
       );
@@ -210,6 +261,7 @@ ${this.trader.toString()}`;
     );
     try {
       const positions = this.trader.getPositions();
+      // console.log(positions);
       await Object.keys(positions).reduce(
         (p, leg) =>
           p.then(() => {
@@ -311,14 +363,14 @@ ${this.trader.toString()}`;
     if (!this.pauseMode) await this.trader.check();
   }
 
-  public stop(): void {
+  public stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    this.trader.stop();
+    return this.trader.stop();
   }
 
   public exit(signal?: string): void {
-    this.stop();
+    this.stop().catch((error) => console.error(error));
     this.telegram?.stop(signal);
     process.exit();
   }

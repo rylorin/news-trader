@@ -45,7 +45,6 @@ class CustomTransport extends Transport {
 
   log(info: any, callback: () => void): void {
     // Perform the writing to the remote service
-    // console.log("custom logger", this.chatId, info[Symbol.for("message")]);
     if (this.telegram && this.chatId) {
       this.telegram
         .sendMessage(this.chatId, info[Symbol.for("message")] as string)
@@ -231,7 +230,7 @@ export class Logger {
    * @param description content of the notification
    */
   public debug(title: string, ...args: any[]): void {
-    this.log(LogLevel.Debug, title, undefined, ...args);
+    this.log(LogLevel.Debug, title, undefined, ...args); // eslint-disable-line @typescript-eslint/no-unsafe-argument
   }
 
   /**
@@ -240,7 +239,7 @@ export class Logger {
    * @param description content of the notification
    */
   public trace(title: string, ...args: any[]): void {
-    this.log(LogLevel.Trace, title, undefined, ...args);
+    this.log(LogLevel.Trace, title, undefined, ...args); // eslint-disable-line @typescript-eslint/no-unsafe-argument
   }
 }
 

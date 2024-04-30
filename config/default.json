@@ -19,9 +19,10 @@
   },
   "trader": {
     "market": "Options (US Tech 100)",
+    "currency": "USD",
     "underlying": "US Tech 100 Barrière",
     "delay": 5,
     "delta": 50,
-    "budget": 2
+    "budget": 0
   }
 }

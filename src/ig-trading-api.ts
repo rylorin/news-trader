@@ -1,4 +1,9 @@
-import axios, { AxiosError, AxiosInstance } from "axios";
+import {
+  default as axios,
+  AxiosError,
+  AxiosInstance,
+  AxiosResponse as Response,
+} from "axios";
 import https from "https";
 import {
   AccountsResponse,
@@ -17,7 +22,7 @@ import {
   Resolution,
   TradingSession,
 } from "ig-trading-api";
-import { LogLevel, gLogger } from "./logger";
+import { gLogger, LogLevel } from "./logger";
 
 enum IgApiEndpoint {
   CreateSession,
@@ -135,8 +140,8 @@ const dateToString = (datetime: Date): string => {
 };
 
 export class APIClient {
-  static URL_DEMO: string = "https://demo-api.ig.com/gateway/deal/";
-  static URL_LIVE: string = "https://api.ig.com/gateway/deal/";
+  // static URL_DEMO: string = "https://demo-api.ig.com/gateway/deal/";
+  // static URL_LIVE: string = "https://api.ig.com/gateway/deal/";
 
   private readonly api: AxiosInstance;
   private readonly apiKey: string;
@@ -151,7 +156,7 @@ export class APIClient {
         identifier: string,
         password: string,
       ): Promise<TradingSession> => this.createSession(identifier, password),
-      logout: () => this.disconnect(),
+      logout: (): Promise<void> => this.disconnect(),
     },
   };
 
@@ -174,8 +179,8 @@ export class APIClient {
 
   private submit_request(
     api: IgApiEndpoint,
-    params?: any,
-    extraHeaders?: any,
+    params?: Record<string, any>,
+    extraHeaders?: Record<string, string>,
   ): Promise<Response> {
     let url: string = endpoints[api].url;
     if (params) {
@@ -210,18 +215,18 @@ export class APIClient {
     }
   }
 
-  private call(
+  private call<T extends Record<string, any>>(
     api: IgApiEndpoint,
-    params?: any,
-    headers?: any,
-  ): Promise<Record<string, any>> {
-    return this.submit_request(api, params, headers)
+    params?: Record<string, any>,
+    headers?: Record<string, any>,
+  ): Promise<T> {
+    return this.submit_request(api, params, headers) // {status:number; statusText:string;error:Record<string,any>;data:T}
       .then((response) => {
         if (response.status == 200) {
           if ((response as any).error) {
-            throw Error((response as any).error);
+            throw Error((response as any).error as string);
           } else {
-            return (response as any).data;
+            return response.data as T;
           }
         } else {
           gLogger.log(
@@ -265,7 +270,7 @@ export class APIClient {
     });
   }
 
-  private heartbeat() {
+  private heartbeat(): void {
     gLogger.trace("ApiClient.heartbeat");
     (
       this.call(IgApiEndpoint.RefreshSession, {
