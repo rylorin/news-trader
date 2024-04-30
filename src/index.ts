@@ -24,12 +24,9 @@ export class MyTradingBotApp {
   private readonly telegram: Telegraf | undefined;
   private timer: NodeJS.Timeout | undefined;
 
-  private pauseMode: boolean;
-
   constructor(config: IConfig) {
     this.config = config;
 
-    this.pauseMode = string2boolean(this.config.get("bot.pause"));
     this.trader = new Trader(config);
 
     if (this.config.get("telegram.apiKey")) {
@@ -43,12 +40,16 @@ export class MyTradingBotApp {
       this.telegram.command("whoami", (ctx) =>
         ctx.reply(formatObject(ctx.update)),
       );
-      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
       // Trader settings commands
+      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
       this.telegram.command("market", (ctx) => this.handleMarketCommand(ctx));
+      this.telegram.command("underlying", (ctx) =>
+        this.handleUnderlyingCommand(ctx),
+      );
       this.telegram.command("currency", (ctx) =>
         this.handleCurrencyCommand(ctx),
       );
+      this.telegram.command("price", (ctx) => this.handlePriceCommand(ctx));
       this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
       this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
       this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
@@ -72,11 +73,6 @@ export class MyTradingBotApp {
     }
   }
 
-  private toString(): string {
-    return `Pause: ${this.pauseMode ? "on" : "off"}
-${this.trader.toString()}`;
-  }
-
   private async handleMarketCommand(
     ctx: Context<{
       message: Update.New & Update.NonChannel & Message.TextMessage;
@@ -96,6 +92,28 @@ ${this.trader.toString()}`;
       .reply(`/market ${this.trader.market}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleMarketCommand", err.message),
+      );
+  }
+
+  private async handleUnderlyingCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleUnderlyingCommand",
+      "Handle 'underlying' command",
+    );
+    if (ctx.payload) {
+      this.trader.underlying = ctx.payload.trim();
+    }
+    await ctx
+      .reply(`/market ${this.trader.underlying}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleUnderlyingCommand", err.message),
       );
   }
 
@@ -134,7 +152,7 @@ ${this.trader.toString()}`;
       "Handle 'status' command",
     );
     await ctx
-      .reply(this.toString())
+      .reply(this.trader.toString())
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleStatusCommand", err.message),
       );
@@ -186,6 +204,26 @@ ${this.trader.toString()}`;
       );
   }
 
+  private async handlePriceCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handlePriceCommand",
+      "Handle 'price' command",
+    );
+    await this.trader
+      .getUnderlyingPrice()
+      .then((price) => ctx.reply(`Underlying price: ${price}`))
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handlePriceCommand", err.message),
+      );
+  }
+
   private async handlePauseCommand(
     ctx: Context<{
       message: Update.New & Update.NonChannel & Message.TextMessage;
@@ -200,10 +238,10 @@ ${this.trader.toString()}`;
     );
     if (ctx.payload) {
       const arg = ctx.payload.trim().replaceAll("  ", " ").toUpperCase();
-      this.pauseMode = string2boolean(arg);
+      this.trader.pause = string2boolean(arg);
     }
     await ctx
-      .reply(`/pause ${this.pauseMode ? "on" : "off"}`)
+      .reply(`/pause ${this.trader.pause ? "on" : "off"}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),
       );
@@ -348,10 +386,7 @@ ${this.trader.toString()}`;
   }
 
   private async check(): Promise<void> {
-    gLogger.trace(
-      "MyTradingBotApp.check",
-      this.pauseMode ? "paused" : "running",
-    );
+    gLogger.trace("MyTradingBotApp.check");
 
     // if (!this.trader.nextEvent && !this.trader.status) {
     //   await fetch("https://www.investing.com/economic-calendar/")
@@ -360,7 +395,7 @@ ${this.trader.toString()}`;
     //     });
     // }
 
-    if (!this.pauseMode) await this.trader.check();
+    return this.trader.check();
   }
 
   public stop(): Promise<void> {

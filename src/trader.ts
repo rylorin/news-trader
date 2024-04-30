@@ -9,7 +9,7 @@ import { IConfig } from "config";
 import { DealConfirmation, DealStatus, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { formatObject } from "./utils";
+import { formatObject, string2boolean } from "./utils";
 
 const StatusType = {
   Idle: undefined,
@@ -47,7 +47,9 @@ export class Trader {
   private readonly config: IConfig;
   private readonly api;
   private readonly delay: number;
+  private _pause: boolean;
   private _market: string;
+  private _underlying: string;
   private _currency: string;
   private _delta: number;
   private _budget: number;
@@ -63,7 +65,9 @@ export class Trader {
       call: undefined,
       winningLeg: undefined,
     };
+    this._pause = string2boolean(this.config.get("trader.pause"));
     this._market = this.config.get("trader.market");
+    this._underlying = this.config.get("trader.underlying");
     this._currency = this.config.get("trader.currency");
     this.delay = this.config.get("trader.delay");
     this._delta = this.config.get("trader.delta");
@@ -76,11 +80,20 @@ export class Trader {
   }
 
   public toString(): string {
-    return `Market: ${this._market}
+    return `Pause: ${this._pause}
+Market: ${this._market}
+Underlying: ${this._underlying}
 Currency: ${this._currency}
 Next event: ${this.nextEvent ? new Date(this.nextEvent).toISOString() : "undefined"}
 Delta: ${this.delta}
 Budget: ${this.budget}`;
+  }
+
+  public get pause(): boolean {
+    return this._pause;
+  }
+  public set pause(value: boolean) {
+    this._pause = value;
   }
 
   public get market(): string {
@@ -88,6 +101,13 @@ Budget: ${this.budget}`;
   }
   public set market(value: string) {
     this._market = value;
+  }
+
+  public get underlying(): string {
+    return this._underlying;
+  }
+  public set underlying(value: string) {
+    this._underlying = value;
   }
 
   public get currency(): string {
@@ -158,8 +178,8 @@ Budget: ${this.budget}`;
     return result?.filter((item) => item.marketStatus == "TRADEABLE");
   }
 
-  private async getUnderlyingPrice(underlying: string): Promise<number> {
-    const markets = (await this.api.searchMarkets(underlying)).markets;
+  public async getUnderlyingPrice(): Promise<number> {
+    const markets = (await this.api.searchMarkets(this._underlying)).markets;
     // console.log(markets);
     const sum = markets.reduce(
       (p, v) => (v.bid && v.offer ? p + v.bid + v.offer : p),
@@ -216,9 +236,7 @@ Budget: ${this.budget}`;
       // Fetch 0 DTE options list
       const options = await this.getDailyOptionsOf(this._market);
       // Get underlying price
-      const price = await this.getUnderlyingPrice(
-        this.config.get("trader.underlying"),
-      );
+      const price = await this.getUnderlyingPrice();
 
       if (options && price) {
         // Place an entry order
@@ -344,21 +362,35 @@ Budget: ${this.budget}`;
     // Update positions
     const positions = (await this.api.getPositions()).positions;
     // console.log(positions);
-    let position;
-    position = positions.find(
-      (item) =>
-        item.position.dealReference ==
-        this.globalStatus.put!.dealConfirmation!.dealReference,
+    // let position;
+    // position = positions.find(
+    //   (item) =>
+    //     item.position.dealReference ==
+    //     this.globalStatus.put!.dealConfirmation!.dealReference,
+    // );
+    // this.globalStatus.put!.position = position?.position;
+    // if (position) this.globalStatus.put!.contract = position.market;
+    // position = positions.find(
+    //   (item) =>
+    //     item.position.dealReference ==
+    //     this.globalStatus.call!.dealConfirmation!.dealReference,
+    // );
+    // this.globalStatus.call!.position = position?.position;
+    // if (position) this.globalStatus.call!.contract = position.market;
+    await legtypes.reduce(
+      (p, leg) =>
+        p.then(() => {
+          const legData: LegDealStatus = this.globalStatus[leg]!;
+          const position = positions.find(
+            (item) =>
+              item.position.dealReference ==
+              legData.dealConfirmation!.dealReference,
+          );
+          legData.position = position?.position;
+          if (position) legData.contract = position.market;
+        }),
+      Promise.resolve(),
     );
-    this.globalStatus.put!.position = position?.position;
-    if (position) this.globalStatus.put!.contract = position.market;
-    position = positions.find(
-      (item) =>
-        item.position.dealReference ==
-        this.globalStatus.call!.dealConfirmation!.dealReference,
-    );
-    this.globalStatus.call!.position = position?.position;
-    if (position) this.globalStatus.call!.contract = position.market;
 
     // Wait for a winning leg
     if (!this.globalStatus.winningLeg) {
@@ -366,28 +398,36 @@ Budget: ${this.budget}`;
         (p, leg) =>
           p.then(() => {
             const legData: LegDealStatus = this.globalStatus[leg]!;
-            if (legData.contract!.bid! > legData.dealConfirmation!.level * 2) {
-              this.globalStatus.winningLeg = leg;
-              gLogger.info(
-                "Trader.check",
-                `${leg} becomes winning leg, sell 50% of position`,
-              );
-              return this.api
-                .closePosition(
-                  legData.position!.dealId,
-                  legData.contract!.epic,
-                  Math.round(legData.position!.size * 50) / 100,
-                  legData.contract!.bid! / 2,
-                )
-                .then((dealReference) => this.api.tradeConfirm(dealReference))
-                .then((dealConfirmation) => {
-                  gLogger.info("Trader.check", formatObject(dealConfirmation));
-                });
-            } else if (
-              legData.contract!.bid! <
-              legData.dealConfirmation!.level * 0.5
-            ) {
-              gLogger.info("Trader.check", `${leg} potentially loosing leg!`);
+            if (legData.position && legData.position?.size > 0) {
+              if (
+                legData.contract!.bid! >
+                legData.dealConfirmation!.level * 2
+              ) {
+                this.globalStatus.winningLeg = leg;
+                gLogger.info(
+                  "Trader.check",
+                  `${leg} becomes winning leg, sell 50% of position`,
+                );
+                return this.api
+                  .closePosition(
+                    legData.position!.dealId,
+                    legData.contract!.epic,
+                    Math.round(legData.position!.size * 50) / 100,
+                    legData.contract!.bid! / 2,
+                  )
+                  .then((dealReference) => this.api.tradeConfirm(dealReference))
+                  .then((dealConfirmation) => {
+                    gLogger.info(
+                      "Trader.check",
+                      formatObject(dealConfirmation),
+                    );
+                  });
+              } else if (
+                legData.contract!.bid! <
+                legData.dealConfirmation!.level * 0.5
+              ) {
+                gLogger.info("Trader.check", `${leg} potentially loosing leg!`);
+              }
             }
           }),
         Promise.resolve(),
@@ -396,20 +436,26 @@ Budget: ${this.budget}`;
   }
 
   public async check(): Promise<void> {
-    gLogger.trace("Trader.check", this.globalStatus.status);
+    gLogger.trace(
+      "Trader.check",
+      this.globalStatus.status,
+      this._pause ? "paused" : "running",
+    );
 
-    if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
-      await this.processIdleState();
-    } else if (this.globalStatus.status == StatusType.Dealing) {
-      await this.processDealingState();
-    } else if (this.globalStatus.status == StatusType.Position) {
-      await this.processPositionState();
+    if (!this._pause) {
+      if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
+        await this.processIdleState();
+      } else if (this.globalStatus.status == StatusType.Dealing) {
+        await this.processDealingState();
+      } else if (this.globalStatus.status == StatusType.Position) {
+        await this.processPositionState();
+      }
+
+      // const accounts = await this.api.getAccounts();
+      // console.log(accounts.accounts[0]);
+
+      gLogger.trace("Trader.check", this.globalStatus);
     }
-
-    const accounts = await this.api.getAccounts();
-    console.log(accounts.accounts[0]);
-
-    gLogger.trace("Trader.check", this.globalStatus);
   }
 
   public stop(): Promise<void> {

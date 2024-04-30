@@ -14,10 +14,8 @@
     "apiKey": false,
     "console": false
   },
-  "bot": {
-    "pause": false
-  },
   "trader": {
+    "pause": true,
     "market": "Options (US Tech 100)",
     "currency": "USD",
     "underlying": "US Tech 100 Barrière",
