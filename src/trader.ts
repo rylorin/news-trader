@@ -12,7 +12,7 @@ import { gLogger } from "./logger";
 import { formatObject, string2boolean } from "./utils";
 
 const StatusType = {
-  Idle: undefined,
+  Idle: "Idle",
   Dealing: "Dealing",
   Position: "Position",
 } as const;
@@ -84,9 +84,10 @@ export class Trader {
 Market: ${this._market}
 Underlying: ${this._underlying}
 Currency: ${this._currency}
-Next event: ${this.nextEvent ? new Date(this.nextEvent).toISOString() : "undefined"}
-Delta: ${this.delta}
-Budget: ${this.budget}`;
+Next event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
+Delta: ${this._delta}
+Budget: ${this._budget}
+Status: ${this._globalStatus.status}`;
   }
 
   public get pause(): boolean {
@@ -164,7 +165,7 @@ Budget: ${this.budget}`;
     const topMarketId = markets.nodes?.find((item) => item.name == market);
 
     markets = await this.api.getMarketNavigation(topMarketId?.id);
-    gLogger.debug("Trader.getDailyOptionsOf", market, markets);
+    gLogger.trace("Trader.getDailyOptionsOf", market, markets);
     const dailyOptionsId = markets.nodes?.find(
       (item) => item.name == "Options jour",
     );
@@ -239,9 +240,15 @@ Budget: ${this.budget}`;
         const twoLegsContracts = this.findEntryContract(options, price);
         // console.log("contracts", twoLegsContracts);
         const size =
-          Math.floor(
-            (this.budget * 100) /
-              legtypes.reduce((p, leg) => p + twoLegsContracts[leg]!.offer!, 0),
+          Math.max(
+            Math.floor(
+              (this.budget * 100) /
+                legtypes.reduce(
+                  (p, leg) => p + twoLegsContracts[leg]!.offer!,
+                  0,
+                ),
+            ),
+            1,
           ) / 100;
 
         await legtypes.reduce(
@@ -313,7 +320,7 @@ Budget: ${this.budget}`;
                     legData.dealConfirmation.dealStatus != DealStatus.ACCEPTED
                   )
                     gLogger.error(
-                      "Trader.check",
+                      "Trader.processDealingState",
                       `Failed to place ${leg} entry order: ${legData.dealConfirmation.reason}`,
                     );
                 });
@@ -336,6 +343,22 @@ Budget: ${this.budget}`;
           )
         ) {
           this.globalStatus.status = StatusType.Position;
+        }
+        // If none deal accepted move back to idle state, and pause trader
+        if (
+          legtypes.reduce(
+            (p, leg) =>
+              (
+                this.globalStatus[leg]!.dealConfirmation?.dealStatus !=
+                DealStatus.ACCEPTED
+              ) ?
+                p
+              : false,
+            true,
+          )
+        ) {
+          this.globalStatus.status = StatusType.Idle;
+          this._pause = true;
         }
       });
   }

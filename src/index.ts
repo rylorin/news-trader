@@ -241,7 +241,7 @@ export class MyTradingBotApp {
       this.trader.pause = string2boolean(arg);
     }
     await ctx
-      .reply(`/pause ${this.trader.pause ? "on" : "off"}`)
+      .reply(`/pause ${this.trader.pause ? "true" : "false"}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),
       );
@@ -260,11 +260,12 @@ export class MyTradingBotApp {
       "Handle 'event' command",
     );
     if (ctx.payload) {
+      const now = Date.now();
       const arg = ctx.payload.trim().replaceAll("  ", " ");
       let event;
       switch (arg.toLowerCase()) {
         case "now":
-          event = Date.now();
+          event = now;
           break;
         case "none":
         case "off":
@@ -272,13 +273,17 @@ export class MyTradingBotApp {
           event = undefined;
           break;
         default:
-          event = new Date(arg.toUpperCase()).getTime();
+          // Only events in the future are accepted
+          event =
+            new Date(arg.toUpperCase()).getTime() > now ?
+              new Date(arg.toUpperCase()).getTime()
+            : undefined;
       }
       this.trader.nextEvent = event;
     }
     await ctx
       .reply(
-        `Next event: ${this.trader.nextEvent ? new Date(this.trader.nextEvent).toISOString() : "undefined"}`,
+        `/event ${this.trader.nextEvent ? new Date(this.trader.nextEvent).toISOString() : "undefined"}`,
       )
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),

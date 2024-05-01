@@ -3,10 +3,11 @@
     "console": "info"
   },
   "telegram": {
-    "apiKey": "replace with your telegram bot api key",
+    "apiKey": "replace with your telegram bot api key and chat ID",
     "console": false
   },
   "trader": {
+    "pause": false,
     "budget": 2
   }
 }
