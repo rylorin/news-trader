@@ -19,8 +19,8 @@ const StatusType = {
 export type StatusType = (typeof StatusType)[keyof typeof StatusType];
 
 const LegType = {
-  Put: "put",
-  Call: "call",
+  Put: "Put",
+  Call: "Call",
 } as const;
 export type LegType = (typeof LegType)[keyof typeof LegType];
 
@@ -61,8 +61,8 @@ export class Trader {
 
     this._globalStatus = {
       status: StatusType.Idle,
-      put: undefined,
-      call: undefined,
+      [LegType.Put]: undefined,
+      [LegType.Call]: undefined,
       winningLeg: undefined,
     };
     this._pause = string2boolean(this.config.get("trader.pause"));
@@ -192,45 +192,38 @@ Budget: ${this.budget}`;
   private findEntryContract(
     options: Market[],
     price: number,
-  ): { put: Market; call: Market } {
-    const put = options
-      .filter((item) => item.instrumentName.endsWith("PUT"))
-      .sort((a, b) => {
-        const aStrike = Math.abs(
-          parseFloat(a.instrumentName.split(" ").at(-2)!) -
-            (price - this.delta),
-        );
-        const bStrike = Math.abs(
-          parseFloat(b.instrumentName.split(" ").at(-2)!) -
-            (price - this.delta),
-        );
-        return bStrike - aStrike;
-      })
-      .at(-1)!;
-    // console.log("puts", puts.at(-1));
-    const call = options
-      .filter((item) => item.instrumentName.endsWith("CALL"))
-      .sort((a, b) => {
-        const aStrike = Math.abs(
-          parseFloat(a.instrumentName.split(" ").at(-2)!) -
-            (price + this.delta),
-        );
-        const bStrike = Math.abs(
-          parseFloat(b.instrumentName.split(" ").at(-2)!) -
-            (price + this.delta),
-        );
-        return bStrike - aStrike;
-      })
-      .at(-1)!;
-    // console.log("calls", calls.at(-1));
-    return { put, call };
+  ): { [LegType.Put]: Market | undefined; [LegType.Call]: Market | undefined } {
+    // const result :{ [LegType.Put]: Market|undefined; [LegType.Call]: Market|undefined } ={ [LegType.Put]: undefined, [LegType.Call]: undefined }
+    return legtypes.reduce(
+      (p, leg) => {
+        p[leg] = options
+          .filter((item) => item.instrumentName.endsWith(leg.toUpperCase()))
+          .sort((a, b) => {
+            const aStrike = Math.abs(
+              parseFloat(a.instrumentName.split(" ").at(-2)!) -
+                (price + (leg == LegType.Put ? -1 : 1) * this.delta),
+            );
+            const bStrike = Math.abs(
+              parseFloat(b.instrumentName.split(" ").at(-2)!) -
+                (price + (leg == LegType.Put ? -1 : 1) * this.delta),
+            );
+            return bStrike - aStrike;
+          })
+          .at(-1);
+        return p;
+      },
+      { [LegType.Put]: undefined, [LegType.Call]: undefined } as {
+        [LegType.Put]: Market | undefined;
+        [LegType.Call]: Market | undefined;
+      },
+    );
   }
 
   private async processIdleState(): Promise<void> {
     const now = Date.now();
     const eventDelay = Math.floor((this.nextEvent! - now) / 60_000); // in mins
     if (eventDelay < 1) {
-      gLogger.info("Trader.check", "Time for trading!");
+      gLogger.info("Trader.processIdleState", "Time for trading!");
       this.nextEvent = undefined;
 
       // Fetch 0 DTE options list
@@ -248,60 +241,47 @@ Budget: ${this.budget}`;
         const size =
           Math.floor(
             (this.budget * 100) /
-              (twoLegsContracts.put.offer! + twoLegsContracts.call.offer!),
+              legtypes.reduce((p, leg) => p + twoLegsContracts[leg]!.offer!, 0),
           ) / 100;
 
-        gLogger.info(
-          "Trader.check",
-          `Buy ${size} ${twoLegsContracts.put.instrumentName} @ ${twoLegsContracts.put.offer} ${this._currency}`,
+        await legtypes.reduce(
+          (p, leg) =>
+            p.then(() => {
+              gLogger.info(
+                "Trader.processIdleState",
+                `Buy ${size} ${twoLegsContracts[leg]!.instrumentName} @ ${twoLegsContracts[leg]!.offer} ${this._currency}`,
+              );
+              return this.api
+                .createPosition(
+                  twoLegsContracts[leg]!.epic,
+                  this._currency,
+                  size,
+                  twoLegsContracts[leg]!.offer! * 2, // To make sure to be executed even in case of price change
+                  twoLegsContracts[leg]!.expiry,
+                )
+                .then((dealReference) => {
+                  this.globalStatus[leg] = {
+                    contract: twoLegsContracts[leg]!,
+                    dealReference,
+                    dealConfirmation: undefined,
+                    position: undefined,
+                  };
+                });
+            }),
+          Promise.resolve(),
         );
-        const putRef = await this.api.createPosition(
-          twoLegsContracts.put.epic,
-          this._currency,
-          size,
-          twoLegsContracts.put.offer! * 2, // To make sure to be executed even in case of price change
-          twoLegsContracts.put.expiry,
-        );
-        this.globalStatus.put = {
-          contract: twoLegsContracts.put,
-          dealReference: putRef,
-          dealConfirmation: undefined,
-          position: undefined,
-        };
-
-        gLogger.info(
-          "Trader.check",
-          `Buy ${size} ${twoLegsContracts.call.instrumentName} @ ${twoLegsContracts.call.offer} ${this._currency}`,
-        );
-        const callRef = await this.api.createPosition(
-          twoLegsContracts.call.epic,
-          this._currency,
-          size,
-          twoLegsContracts.call.offer! * 2, // To make sure to be executed even in case of price change
-          twoLegsContracts.call.expiry,
-        );
-        this.globalStatus.call = {
-          contract: twoLegsContracts.call,
-          dealReference: callRef,
-          dealConfirmation: undefined,
-          position: undefined,
-        };
       } else {
         gLogger.error(
-          "Trader.check",
+          "Trader.processIdleState",
           "No daily options or can't guess underlying price!",
         );
       }
     } else {
       // Display count down
-      // const mins = Math.ceil(
-      //   (this.nextEvent! - this.delay * 60_000 - now) / 60_000,
-      // );
-      // console.log(mins, mins % 60);
       if (eventDelay >= 60) {
         if (eventDelay % 60 == 0)
           gLogger.info(
-            "Trader.check",
+            "Trader.processIdleState",
             `${eventDelay / 60} hour(s) before trading.`,
           );
       } else {
@@ -309,88 +289,85 @@ Budget: ${this.budget}`;
         if (eventDelay >= 10 && eventDelay % 10 == 0) display = true;
         else if (eventDelay <= 10) display = true;
         if (display)
-          gLogger.info("Trader.check", `${eventDelay} min(s) before event.`);
+          gLogger.info(
+            "Trader.processIdleState",
+            `${eventDelay} min(s) before event.`,
+          );
       }
     }
   }
 
-  private async processDealingState(): Promise<void> {
-    if (
-      this.globalStatus.put &&
-      this.globalStatus.put.dealReference &&
-      !this.globalStatus.put.dealConfirmation
-    ) {
-      this.globalStatus.put.dealConfirmation = await this.api.tradeConfirm(
-        this.globalStatus.put.dealReference,
-      );
-      if (
-        this.globalStatus.put.dealConfirmation.dealStatus != DealStatus.ACCEPTED
+  private processDealingState(): Promise<void> {
+    // Update deal confirmation
+    return legtypes
+      .reduce(
+        (p, leg) =>
+          p.then(() => {
+            const legData: LegDealStatus = this.globalStatus[leg]!;
+            if (legData.dealReference && !legData.dealConfirmation) {
+              return this.api
+                .tradeConfirm(legData.dealReference)
+                .then((dealConfirmation) => {
+                  legData.dealConfirmation = dealConfirmation;
+                  if (
+                    legData.dealConfirmation.dealStatus != DealStatus.ACCEPTED
+                  )
+                    gLogger.error(
+                      "Trader.check",
+                      `Failed to place ${leg} entry order: ${legData.dealConfirmation.reason}`,
+                    );
+                });
+            }
+          }),
+        Promise.resolve(),
       )
-        gLogger.error(
-          "Trader.check",
-          `Failed to place Put entry order: ${this.globalStatus.put.dealConfirmation.reason}`,
-        );
-    }
-    if (
-      this.globalStatus.call &&
-      this.globalStatus.call.dealReference &&
-      !this.globalStatus.call.dealConfirmation
-    ) {
-      this.globalStatus.call.dealConfirmation = await this.api.tradeConfirm(
-        this.globalStatus.call.dealReference,
-      );
-      if (
-        this.globalStatus.call.dealConfirmation.dealStatus !=
-        DealStatus.ACCEPTED
-      )
-        gLogger.error(
-          "Trader.check",
-          `Failed to place Call entry order: ${this.globalStatus.call.dealConfirmation.reason}`,
-        );
-    }
-    if (
-      this.globalStatus.put?.dealConfirmation?.dealStatus ==
-        DealStatus.ACCEPTED &&
-      this.globalStatus.call?.dealConfirmation?.dealStatus ==
-        DealStatus.ACCEPTED
-    ) {
-      this.globalStatus.status = StatusType.Position;
-    }
+      .then(() => {
+        // When all deals accepted we can move to next step
+        if (
+          legtypes.reduce(
+            (p, leg) =>
+              (
+                this.globalStatus[leg]!.dealConfirmation?.dealStatus ==
+                DealStatus.ACCEPTED
+              ) ?
+                p
+              : false,
+            true,
+          )
+        ) {
+          this.globalStatus.status = StatusType.Position;
+        }
+      });
   }
 
   private async processPositionState(): Promise<void> {
     // Update positions
     const positions = (await this.api.getPositions()).positions;
     // console.log(positions);
-    // let position;
-    // position = positions.find(
-    //   (item) =>
-    //     item.position.dealReference ==
-    //     this.globalStatus.put!.dealConfirmation!.dealReference,
+    // await legtypes.reduce(
+    //   (p, leg) =>
+    //     p.then(() => {
+    //       const legData: LegDealStatus = this.globalStatus[leg]!;
+    //       const position = positions.find(
+    //         (item) =>
+    //           item.position.dealReference ==
+    //           legData.dealConfirmation!.dealReference,
+    //       );
+    //       legData.position = position?.position;
+    //       if (position) legData.contract = position.market;
+    //     }),
+    //   Promise.resolve(),
     // );
-    // this.globalStatus.put!.position = position?.position;
-    // if (position) this.globalStatus.put!.contract = position.market;
-    // position = positions.find(
-    //   (item) =>
-    //     item.position.dealReference ==
-    //     this.globalStatus.call!.dealConfirmation!.dealReference,
-    // );
-    // this.globalStatus.call!.position = position?.position;
-    // if (position) this.globalStatus.call!.contract = position.market;
-    await legtypes.reduce(
-      (p, leg) =>
-        p.then(() => {
-          const legData: LegDealStatus = this.globalStatus[leg]!;
-          const position = positions.find(
-            (item) =>
-              item.position.dealReference ==
-              legData.dealConfirmation!.dealReference,
-          );
-          legData.position = position?.position;
-          if (position) legData.contract = position.market;
-        }),
-      Promise.resolve(),
-    );
+    legtypes.forEach((leg) => {
+      const legData: LegDealStatus = this.globalStatus[leg]!;
+      const position = positions.find(
+        (item) =>
+          item.position.dealReference ==
+          legData.dealConfirmation!.dealReference,
+      );
+      legData.position = position?.position;
+      if (position) legData.contract = position.market;
+    });
 
     // Wait for a winning leg
     if (!this.globalStatus.winningLeg) {
