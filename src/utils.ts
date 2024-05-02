@@ -1,3 +1,5 @@
+import { LegType, LegTypeEnum } from "./trader";
+
 /**
  * @internal
  *
@@ -26,4 +28,13 @@ export function string2boolean(text: string | boolean): boolean {
   if (typeof text == "boolean") return text;
   const bool: string = text.trim().toLowerCase();
   return bool == "true" || bool == "on" || bool == "yes";
+}
+
+export function oppositeLeg(leg: LegType): LegType {
+  switch (leg) {
+    case LegTypeEnum.Put:
+      return LegTypeEnum.Call;
+    case LegTypeEnum.Call:
+      return LegTypeEnum.Put;
+  }
 }
