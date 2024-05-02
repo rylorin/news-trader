@@ -241,7 +241,7 @@ export class MyTradingBotApp {
       this.trader.pause = string2boolean(arg);
     }
     await ctx
-      .reply(`/pause ${this.trader.pause ? "true" : "false"}`)
+      .reply(`/pause ${this.trader.pause ? "on" : "off"}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleTrader", err.message),
       );

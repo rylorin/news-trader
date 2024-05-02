@@ -1,0 +1,5 @@
+/.github
+/.vscode.env
+/logs
+/test.json
+/test.sh

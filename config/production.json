@@ -8,6 +8,6 @@
   },
   "trader": {
     "pause": false,
-    "budget": 2
+    "budget": 20
   }
 }

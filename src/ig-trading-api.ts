@@ -111,7 +111,7 @@ const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
 };
 
 /**
- * Convert a Javascript Date to string format YYYY-MM-DDTHH:MM:SS (UTC)
+ * Convert a Javascript Date to string format (UTC) YYYY-MM-DDTHH:MM:SS
  * @param {Date} datetime date to convert
  * @returns datetime converted as a string
  */
@@ -147,6 +147,8 @@ export class APIClient {
   private readonly apiKey: string;
   private keepalive: NodeJS.Timeout | undefined;
 
+  private identifier: string | undefined;
+  private password: string | undefined;
   private oauthToken: OauthToken | undefined;
   private accountId: string | undefined;
 
@@ -207,7 +209,7 @@ export class APIClient {
       case "get":
         return this.api.get(url, { params, headers });
       case "delete":
-        return this.api.delete(url, { headers });
+        return this.api.delete(url, { data: params, headers });
       case "put":
         return this.api.put(url, params, { headers });
       default:
@@ -221,28 +223,39 @@ export class APIClient {
     headers?: Record<string, any>,
   ): Promise<T> {
     return this.submit_request(api, params, headers) // {status:number; statusText:string;error:Record<string,any>;data:T}
-      .then((response) => {
-        if (response.status == 200) {
-          if ((response as any).error) {
-            throw Error((response as any).error as string);
-          } else {
-            return response.data as T;
-          }
-        } else {
+      .then((response) => response.data as T)
+      .catch((error: AxiosError) => {
+        if (
+          error.response &&
+          error.response.status == 400 &&
+          error.response.data
+        ) {
+          gLogger.log(
+            LogLevel.Trace,
+            "APIClient.call:1",
+            undefined,
+            error.response,
+          );
+          const errorData = error.response.data as {
+            errorCode: string;
+          };
           gLogger.log(
             LogLevel.Error,
-            "ApiClient.call",
+            "APIClient.call:1",
             undefined,
-            response.statusText,
+            errorData.errorCode,
           );
-          gLogger.log(LogLevel.Debug, "ApiClient.call", undefined, response);
-          throw Error(response.statusText);
+          throw Error(errorData.errorCode);
+        } else {
+          gLogger.log(LogLevel.Debug, "APIClient.call:2", undefined, error);
+          gLogger.log(
+            LogLevel.Error,
+            "APIClient.call:2",
+            undefined,
+            error.message,
+          );
+          throw error;
         }
-      })
-      .catch((error: AxiosError) => {
-        gLogger.log(LogLevel.Error, "ApiClient.call", undefined, error.message);
-        gLogger.log(LogLevel.Debug, "ApiClient.call", undefined, error);
-        throw error;
       });
   }
 
@@ -264,7 +277,7 @@ export class APIClient {
       this.oauthToken = session.oauthToken;
       this.keepalive = setTimeout(
         () => this.heartbeat(),
-        (parseInt(this.oauthToken!.expires_in) - 10) * 1_000,
+        parseInt(this.oauthToken!.expires_in) * 500, // renew token twice as frequently as needed
       );
       return session as TradingSession;
     });
@@ -272,25 +285,30 @@ export class APIClient {
 
   private heartbeat(): void {
     gLogger.trace("ApiClient.heartbeat");
-    (
-      this.call(IgApiEndpoint.RefreshSession, {
-        refresh_token: this.oauthToken!.refresh_token,
-      }) as Promise<OauthToken>
-    )
+    this.call<OauthToken>(IgApiEndpoint.RefreshSession, {
+      refresh_token: this.oauthToken!.refresh_token,
+    })
       .then((response) => {
         gLogger.trace("ApiClient.heartbeat", response);
         this.oauthToken = response;
         this.keepalive = setTimeout(
           () => this.heartbeat(),
-          (parseInt(this.oauthToken.expires_in) - 10) * 1_000,
+          parseInt(this.oauthToken.expires_in) * 500, // renew token twice as frequently as needed
         );
       })
-      .catch((error) => console.error(error));
+      .catch((error) => {
+        gLogger.log(LogLevel.Error, "ApiClient.heartbeat", undefined, error);
+        console.error(error);
+        // Trying to reconnect
+        return this.createSession(this.identifier!, this.password!);
+      });
   }
 
   public disconnect(): Promise<void> {
     if (this.keepalive) clearInterval(this.keepalive);
     this.keepalive = undefined;
+    this.identifier = undefined;
+    this.password = undefined;
     return this.call(IgApiEndpoint.Logout).then(() => undefined);
   }
 
@@ -367,7 +385,14 @@ export class APIClient {
     level: number,
     expiry = "-",
   ): Promise<string> {
-    gLogger.trace("APIClient.createPosition");
+    gLogger.trace(
+      "APIClient.createPosition",
+      epic,
+      currencyCode,
+      size,
+      level,
+      expiry,
+    );
     const createPositionRequest: PositionCreateRequest = {
       epic,
       direction: Direction.BUY,
@@ -389,29 +414,28 @@ export class APIClient {
 
   public closePosition(
     dealId: string,
-    epic: string,
     size: number,
     level: number,
-    expiry = "-",
   ): Promise<string> {
-    gLogger.trace("APIClient.createPosition");
+    // Provide either dealId or epic + expiry
     const closePositionRequest: PositionCloseRequest = {
       dealId,
+      expiry: "-",
       direction: Direction.SELL,
-      epic,
-      expiry,
+      size,
       level,
       orderType: PositionOrderType.LIMIT,
-      // quoteId
-      size,
       timeInForce: PositionTimeInForce.EXECUTE_AND_ELIMINATE,
     };
-    return (
-      this.call(
-        IgApiEndpoint.ClosePosition,
-        closePositionRequest,
-      ) as Promise<DealReferenceResponse>
-    ).then((response: DealReferenceResponse) => response.dealReference);
+    gLogger.trace("APIClient.closePosition", closePositionRequest);
+    console.log("closePositionRequest", JSON.stringify(closePositionRequest));
+    return this.call<DealReferenceResponse>(
+      IgApiEndpoint.ClosePosition,
+      closePositionRequest,
+    ).then((response: DealReferenceResponse) => {
+      gLogger.trace("APIClient.closePosition", dealId, response);
+      return response.dealReference;
+    });
   }
 
   public tradeConfirm(dealReference: string): Promise<DealConfirmation> {

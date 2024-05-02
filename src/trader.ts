@@ -9,7 +9,7 @@ import { IConfig } from "config";
 import { DealConfirmation, DealStatus, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { formatObject, string2boolean } from "./utils";
+import { string2boolean } from "./utils";
 
 const StatusType = {
   Idle: "Idle",
@@ -367,20 +367,6 @@ Status: ${this._globalStatus.status}`;
     // Update positions
     const positions = (await this.api.getPositions()).positions;
     // console.log(positions);
-    // await legtypes.reduce(
-    //   (p, leg) =>
-    //     p.then(() => {
-    //       const legData: LegDealStatus = this.globalStatus[leg]!;
-    //       const position = positions.find(
-    //         (item) =>
-    //           item.position.dealReference ==
-    //           legData.dealConfirmation!.dealReference,
-    //       );
-    //       legData.position = position?.position;
-    //       if (position) legData.contract = position.market;
-    //     }),
-    //   Promise.resolve(),
-    // );
     legtypes.forEach((leg) => {
       const legData: LegDealStatus = this.globalStatus[leg]!;
       const position = positions.find(
@@ -405,28 +391,30 @@ Status: ${this._globalStatus.status}`;
               ) {
                 this.globalStatus.winningLeg = leg;
                 gLogger.info(
-                  "Trader.check",
+                  "Trader.processPositionState",
                   `${leg} becomes winning leg, sell 50% of position`,
                 );
                 return this.api
                   .closePosition(
                     legData.position!.dealId,
-                    legData.contract!.epic,
                     Math.round(legData.position!.size * 50) / 100,
                     legData.contract!.bid! / 2,
                   )
                   .then((dealReference) => this.api.tradeConfirm(dealReference))
                   .then((dealConfirmation) => {
                     gLogger.info(
-                      "Trader.check",
-                      formatObject(dealConfirmation),
+                      "Trader.processPositionState",
+                      JSON.stringify(dealConfirmation),
                     );
                   });
               } else if (
                 legData.contract!.bid! <
                 legData.dealConfirmation!.level * 0.5
               ) {
-                gLogger.info("Trader.check", `${leg} potentially loosing leg!`);
+                gLogger.info(
+                  "Trader.processPositionState",
+                  `${leg} potentially loosing leg!`,
+                );
               }
             }
           }),
