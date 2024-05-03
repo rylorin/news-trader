@@ -7,7 +7,6 @@
     "console": false
   },
   "trader": {
-    "pause": false,
     "budget": 20
   }
 }

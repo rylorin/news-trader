@@ -9,12 +9,13 @@ import { IConfig } from "config";
 import { DealConfirmation, DealStatus, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { oppositeLeg, string2boolean } from "./utils";
+import { oppositeLeg, parseEvent, string2boolean } from "./utils";
 
 const StatusType = {
   Idle: "Idle",
   Dealing: "Dealing",
   Position: "Position",
+  Won: "Won",
 } as const;
 export type StatusType = (typeof StatusType)[keyof typeof StatusType];
 
@@ -46,7 +47,6 @@ type DealingStatus = {
 export class Trader {
   private readonly config: IConfig;
   private readonly api;
-  private readonly delay: number;
   private _pause: boolean;
   private _market: string;
   private _underlying: string;
@@ -69,9 +69,12 @@ export class Trader {
     this._market = this.config.get("trader.market");
     this._underlying = this.config.get("trader.underlying");
     this._currency = this.config.get("trader.currency");
-    this.delay = this.config.get("trader.delay");
     this._delta = this.config.get("trader.delta");
     this._budget = this.config.get("trader.budget");
+    if (this.config.has("trader.event"))
+      this._nextEvent = parseEvent(this.config.get("trader.event"));
+    if (this.config.has("trader.state"))
+      this._globalStatus = this.config.get("trader.state");
 
     this.api = new APIClient(
       config.get("ig-api.url"),
@@ -241,18 +244,13 @@ Status: ${this._globalStatus.status}`;
 
         // Get delta distance put and call
         const twoLegsContracts = this.findEntryContract(options, price);
-        // console.log("contracts", twoLegsContracts);
-        const size =
-          Math.max(
-            Math.floor(
-              (this.budget * 100) /
-                legtypes.reduce(
-                  (p, leg) => p + twoLegsContracts[leg]!.offer!,
-                  0,
-                ),
-            ),
-            1,
-          ) / 100;
+        const size = Math.max(
+          Math.floor(
+            (this.budget * 200) /
+              legtypes.reduce((p, leg) => p + twoLegsContracts[leg]!.offer!, 0),
+          ) / 200,
+          0.02, // min size of 0.02
+        );
 
         await legtypes.reduce(
           (p, leg) =>
@@ -301,7 +299,7 @@ Status: ${this._globalStatus.status}`;
         if (display)
           gLogger.info(
             "Trader.processIdleState",
-            `${eventDelay} min(s) before event.`,
+            `${eventDelay} min(s) before trading.`,
           );
       }
     }
@@ -384,12 +382,16 @@ Status: ${this._globalStatus.status}`;
   private async closeLeg(
     leg: LegType,
     percent: number,
+    posRelative: boolean = false,
   ): Promise<DealConfirmation> {
     const legData: LegDealStatus = this.globalStatus[leg]!;
+    const relSize = Math.ceil(legData.position!.size * percent * 100) / 100; // Relative to current position
+    const absSize =
+      Math.ceil(legData.dealConfirmation!.size * percent * 100) / 100; // Relative to initial position
     return this.api
       .closePosition(
         legData.position!.dealId,
-        Math.ceil(legData.position!.size * percent * 100) / 100,
+        posRelative ? relSize : absSize,
         legData.contract!.bid! / 2,
       )
       .then((dealReference) => this.api.tradeConfirm(dealReference))
@@ -402,52 +404,81 @@ Status: ${this._globalStatus.status}`;
       });
   }
 
+  private isWinning(leg: LegType): boolean {
+    const legData: LegDealStatus = this.globalStatus[leg]!;
+    return !!(
+      legData.contract &&
+      legData.dealConfirmation &&
+      legData.position &&
+      legData.position.size > 0 &&
+      legData.contract.bid &&
+      legData.contract.bid > legData.dealConfirmation.level * 2
+    );
+  }
+
+  private isLoosing(leg: LegType): boolean {
+    const legData: LegDealStatus = this.globalStatus[leg]!;
+    return !!(
+      legData.contract &&
+      legData.dealConfirmation &&
+      legData.position &&
+      legData.position.size > 0 &&
+      legData.contract.bid &&
+      legData.contract.bid < legData.dealConfirmation.level * 0.5
+    );
+  }
+
+  private allLoosing(): boolean {
+    return legtypes.reduce((p, leg) => (this.isLoosing(leg) ? p : false), true);
+  }
+
   private async processPositionState(): Promise<void> {
-    // Wait for a winning leg
-    if (!this.globalStatus.winningLeg) {
+    if (this.allLoosing()) {
+      gLogger.info(
+        "Trader.processPositionState",
+        "All legs are loosing, exiting positions.",
+      );
+      // Exit all positions
+      await legtypes.reduce(
+        (p, leg) =>
+          p.then(() => this.closeLeg(leg, 1, true).then(() => undefined)),
+        Promise.resolve(),
+      );
+    } else {
+      // Wait for a winning leg
       await legtypes.reduce(
         (p, leg) =>
           p.then(() => {
-            const legData: LegDealStatus = this.globalStatus[leg]!;
-            if (
-              legData.position &&
-              legData.dealConfirmation &&
-              legData.position.size > 0
-            ) {
-              // (legData.dealConfirmation.size/2)
-              if (
-                legData.contract!.bid! >
-                legData.dealConfirmation!.level * 2
-              ) {
-                gLogger.info(
-                  "Trader.processPositionState",
-                  `${leg} becomes winning leg, sell 50% of position`,
-                );
-                this.globalStatus.winningLeg = leg;
-                return (
-                  this.closeLeg(leg, 0.5)
-                    // And sell 50% of loosing leg
-                    .then(() => this.closeLeg(oppositeLeg(leg), 0.5))
-                    .then(() => undefined)
-                );
-              } else if (
-                legData.contract!.bid! <
-                legData.dealConfirmation!.level * 0.5
-              ) {
-                gLogger.info(
-                  "Trader.processPositionState",
-                  `${leg} potentially loosing leg!`,
-                );
-              }
+            if (this.isWinning(leg)) {
+              gLogger.info(
+                "Trader.processPositionState",
+                `${leg} becomes winning leg, selling 50% of position`,
+              );
+              this._globalStatus.status = StatusType.Won;
+              this._globalStatus.winningLeg = leg;
+              return (
+                // Sell 50% of winning leg
+                this.closeLeg(leg, 0.5)
+                  // And sell 50% of loosing leg
+                  .then(() => this.closeLeg(oppositeLeg(leg), 0.5))
+                  .then(() => undefined)
+              );
+            } else if (this.isLoosing(leg)) {
+              gLogger.info(
+                "Trader.processPositionState",
+                `${leg} potentially loosing leg!`,
+              );
             }
           }),
         Promise.resolve(),
       );
-    } else {
-      // Monitor winning leg
-      const _legData: LegDealStatus =
-        this.globalStatus[this.globalStatus.winningLeg]!;
     }
+  }
+
+  private legPosition(leg: LegType): number {
+    const legData = this.globalStatus[leg];
+    if (legData && legData.position) return legData.position.size;
+    else return 0;
   }
 
   public async check(): Promise<void> {
@@ -458,13 +489,20 @@ Status: ${this._globalStatus.status}`;
     );
 
     if (!this._pause) {
-      if (this.nextEvent && this.globalStatus.status == StatusType.Idle) {
+      if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
         await this.processIdleState();
-      } else if (this.globalStatus.status == StatusType.Dealing) {
+      } else if (this._globalStatus.status == StatusType.Dealing) {
         await this.processDealingState();
-      } else if (this.globalStatus.status == StatusType.Position) {
+      } else if (this._globalStatus.status == StatusType.Position) {
         await this.updatePositions(); // Update positions
         await this.processPositionState();
+      } else if (this._globalStatus.status == StatusType.Won) {
+        await this.updatePositions();
+        const totalPositions = legtypes.reduce(
+          (p, leg) => p + this.legPosition(leg),
+          0,
+        );
+        if (!totalPositions) this._globalStatus.status = StatusType.Idle;
       }
 
       // const accounts = await this.api.getAccounts();

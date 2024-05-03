@@ -38,3 +38,30 @@ export function oppositeLeg(leg: LegType): LegType {
       return LegTypeEnum.Put;
   }
 }
+
+export function parseEvent(text: string): number | undefined {
+  const now = Date.now();
+  let event;
+  switch (text.toLowerCase()) {
+    case "now":
+      event = now;
+      break;
+    case "none":
+    case "off":
+    case "undefined":
+      event = undefined;
+      break;
+    default:
+      // Only events in the future are accepted
+      if (text.startsWith("+")) {
+        const mins = parseInt(text.substring(1));
+        event = now + mins * 60_000;
+      } else {
+        event =
+          new Date(text.toUpperCase()).getTime() > now ?
+            new Date(text.toUpperCase()).getTime()
+          : undefined;
+      }
+  }
+  return event;
+}

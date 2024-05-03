@@ -16,7 +16,7 @@ import { Message, Update } from "telegraf/typings/core/types/typegram";
 import { CommandContextExtn } from "telegraf/typings/telegram-types";
 import { gLogger, LogLevel } from "./logger";
 import { LegType, Trader } from "./trader";
-import { formatObject, string2boolean } from "./utils";
+import { formatObject, parseEvent, string2boolean } from "./utils";
 
 export class MyTradingBotApp {
   private readonly config: IConfig;
@@ -260,26 +260,8 @@ export class MyTradingBotApp {
       "Handle 'event' command",
     );
     if (ctx.payload) {
-      const now = Date.now();
-      const arg = ctx.payload.trim().replaceAll("  ", " ");
-      let event;
-      switch (arg.toLowerCase()) {
-        case "now":
-          event = now;
-          break;
-        case "none":
-        case "off":
-        case "undefined":
-          event = undefined;
-          break;
-        default:
-          // Only events in the future are accepted
-          event =
-            new Date(arg.toUpperCase()).getTime() > now ?
-              new Date(arg.toUpperCase()).getTime()
-            : undefined;
-      }
-      this.trader.nextEvent = event;
+      const text = ctx.payload.trim().replaceAll("  ", " ");
+      this.trader.nextEvent = parseEvent(text);
     }
     await ctx
       .reply(
