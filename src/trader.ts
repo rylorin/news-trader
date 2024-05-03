@@ -6,7 +6,13 @@ dotenv.config();
 import { IConfig } from "config";
 
 // The following can relying on env var and config
-import { DealConfirmation, DealStatus, Market, Position } from "ig-trading-api";
+import {
+  Account,
+  DealConfirmation,
+  DealStatus,
+  Market,
+  Position,
+} from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
 import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
@@ -502,6 +508,11 @@ Status: ${this._globalStatus.status}`;
       gLogger.debug("Trader.check", accounts);
       gLogger.info("Trader.check", JSON.stringify(accounts.accounts[0]));
     }
+  }
+
+  public async getAccount(): Promise<Account> {
+    const accounts = await this.api.getAccounts();
+    return accounts.accounts[0];
   }
 
   public async check(): Promise<void> {

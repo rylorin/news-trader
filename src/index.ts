@@ -58,6 +58,7 @@ export class MyTradingBotApp {
       this.telegram.command("positions", (ctx) =>
         this.handlePositionsCommand(ctx),
       );
+      this.telegram.command("account", (ctx) => this.handleAccountCommand(ctx));
       // Catch-alls
       this.telegram.hears(/\/(.+)/, (ctx) => {
         const cmd = ctx.match[1];
@@ -289,13 +290,10 @@ ${this.trader.toString()}`,
     );
     try {
       const positions = this.trader.getPositions();
-      // console.log(positions);
       await Object.keys(positions).reduce(
         (p, leg) =>
           p.then(() => {
-            // console.log(leg);
             const output = formatObject(positions[leg as LegType]);
-            // console.log(output);
             return ctx
               .reply(leg + ": " + output)
               .then(() => undefined)
@@ -313,6 +311,37 @@ ${this.trader.toString()}`,
       gLogger.log(
         LogLevel.Error,
         "MyTradingBotApp.handlePositionsCommand",
+        undefined,
+        err,
+      );
+    }
+  }
+
+  private async handleAccountCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleAccountCommand",
+      "Handle 'account' command",
+    );
+    try {
+      return this.trader
+        .getAccount()
+        .then((account) => ctx.reply(formatObject(account)))
+        .then(() => undefined)
+        .catch((err: Error) =>
+          gLogger.error("MyTradingBotApp.handleAccountCommand", err.message),
+        );
+    } catch (err) {
+      console.error(err);
+      gLogger.log(
+        LogLevel.Error,
+        "MyTradingBotApp.handleAccountCommand",
         undefined,
         err,
       );
