@@ -152,7 +152,10 @@ export class MyTradingBotApp {
       "Handle 'status' command",
     );
     await ctx
-      .reply(this.trader.toString())
+      .reply(
+        `Now: ${new Date().toISOString()}
+${this.trader.toString()}`,
+      )
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleStatusCommand", err.message),
       );

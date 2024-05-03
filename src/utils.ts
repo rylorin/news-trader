@@ -65,3 +65,5 @@ export function parseEvent(text: string): number | undefined {
   }
   return event;
 }
+
+export const deepCopy = (object: any) => JSON.parse(JSON.stringify(object));
