@@ -46,8 +46,13 @@ class CustomTransport extends Transport {
   log(info: any, callback: () => void): void {
     // Perform the writing to the remote service
     if (this.telegram && this.chatId) {
+      let text = info[Symbol.for("message")] as string;
+      if (text.length > 4096) {
+        console.debug("Text too long for Telegram", text);
+        text = text.substring(0, 4093) + "...";
+      }
       this.telegram
-        .sendMessage(this.chatId, info[Symbol.for("message")] as string)
+        .sendMessage(this.chatId, text)
         .then(() => callback())
         .catch((error: Error) => console.error(error));
     } else {

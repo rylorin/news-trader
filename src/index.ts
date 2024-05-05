@@ -32,7 +32,9 @@ export class MyTradingBotApp {
     if (this.config.get("telegram.apiKey")) {
       // Create telegram bot to control application
       this.telegram = new Telegraf(this.config.get("telegram.apiKey"));
-      this.telegram.start((ctx) => ctx.reply("Welcome"));
+      this.telegram.start((ctx) =>
+        ctx.reply(`Welcome ${ctx.message.from.username}!`),
+      );
       this.telegram.help((ctx) => ctx.reply("Send me a sticker"));
       this.telegram.on(message("sticker"), (ctx) => ctx.reply("👍"));
       // Bot commands
@@ -52,6 +54,7 @@ export class MyTradingBotApp {
       this.telegram.command("price", (ctx) => this.handlePriceCommand(ctx));
       this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
       this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
+      this.telegram.command("delay", (ctx) => this.handleDelayCommand(ctx));
       this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
       this.telegram.command("status", (ctx) => this.handleStatusCommand(ctx));
       this.telegram.command("state", (ctx) => this.handleStateCommand(ctx));
@@ -59,6 +62,7 @@ export class MyTradingBotApp {
         this.handlePositionsCommand(ctx),
       );
       this.telegram.command("account", (ctx) => this.handleAccountCommand(ctx));
+      this.telegram.command("explain", (ctx) => this.handleExplainCommand(ctx));
       // Catch-alls
       this.telegram.hears(/\/(.+)/, (ctx) => {
         const cmd = ctx.match[1];
@@ -153,12 +157,28 @@ export class MyTradingBotApp {
       "Handle 'status' command",
     );
     await ctx
-      .reply(
-        `Now: ${new Date().toISOString()}
-${this.trader.toString()}`,
-      )
+      .reply(this.trader.toString())
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleStatusCommand", err.message),
+      );
+  }
+
+  private async handleExplainCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleExplainCommand",
+      "Handle 'explain' command",
+    );
+    await ctx
+      .reply(this.trader.explain())
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleExplainCommand", err.message),
       );
   }
 
@@ -182,6 +202,29 @@ ${this.trader.toString()}`,
       .reply(`/delta ${this.trader.delta}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleDeltaCommand", err.message),
+      );
+  }
+
+  private async handleDelayCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleDelayCommand",
+      "Handle 'delay' command",
+    );
+    if (ctx.payload) {
+      const arg = ctx.payload.trim().replaceAll("  ", " ");
+      this.trader.delay = parseInt(arg);
+    }
+    await ctx
+      .reply(`/delay ${this.trader.delay}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleDelayCommand", err.message),
       );
   }
 
@@ -289,7 +332,7 @@ ${this.trader.toString()}`,
       "Handle 'positions' command",
     );
     try {
-      const positions = this.trader.getPositions();
+      const positions = await this.trader.getPositions();
       await Object.keys(positions).reduce(
         (p, leg) =>
           p.then(() => {
@@ -366,9 +409,7 @@ ${this.trader.toString()}`,
       }
       // console.log(ctx);
       await ctx
-        .reply(
-          "/" + ctx.command + " " + JSON.stringify(this.trader.globalStatus),
-        )
+        .reply(formatObject(this.trader.globalStatus))
         .catch((err: Error) =>
           gLogger.error("MyTradingBotApp.handleStateCommand", err.message),
         );
@@ -401,7 +442,7 @@ ${this.trader.toString()}`,
       });
     }, 60_000);
 
-    await this.telegram?.launch(); // WARNING: this call never returns
+    await this.telegram?.launch(() => undefined); // WARNING: this call never returns
   }
 
   private async check(): Promise<void> {

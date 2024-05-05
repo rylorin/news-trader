@@ -20,6 +20,7 @@
     "currency": "USD",
     "underlying": "US Tech 100 Barrière",
     "delta": 50,
-    "budget": 1
+    "budget": 1,
+    "delay": 1
   }
 }

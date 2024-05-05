@@ -6,13 +6,7 @@ dotenv.config();
 import { IConfig } from "config";
 
 // The following can relying on env var and config
-import {
-  Account,
-  DealConfirmation,
-  DealStatus,
-  Market,
-  Position,
-} from "ig-trading-api";
+import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
 import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
@@ -35,16 +29,18 @@ const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
 type LegDealStatus = {
   contract: Market;
-  dealReference: string | undefined;
-  dealConfirmation: DealConfirmation | undefined;
-  position: Position | undefined;
+  dealReference: string;
+  dealConfirmation: DealConfirmation;
+  position?: Position;
+  loosingPartSold: boolean;
+  x2PartSold: boolean;
+  x3PartSold: boolean;
 };
 
 type DealingStatus = {
   status: StatusType;
   [LegTypeEnum.Put]: LegDealStatus | undefined;
   [LegTypeEnum.Call]: LegDealStatus | undefined;
-  winningLeg: LegType | undefined;
 };
 
 /**
@@ -61,22 +57,40 @@ export class Trader {
   private _budget: number;
   private _globalStatus: DealingStatus;
   private _nextEvent: number | undefined;
+  private _loosingLevel: number;
+  private _loosingExitSize: number;
+  private readonly _x2WinningLevel: number;
+  private readonly _x2ExitSize: number;
+  private readonly _x3WinningLevel: number;
+  private readonly _x3ExitSize: number;
+  private _delay: number;
 
   constructor(config: IConfig) {
     this.config = config;
 
+    // Bot status
     this._globalStatus = {
       status: StatusType.Idle,
       [LegTypeEnum.Put]: undefined,
       [LegTypeEnum.Call]: undefined,
-      winningLeg: undefined,
     };
+
+    // Bot settings
     this._pause = string2boolean(this.config.get("trader.pause"));
     this._market = this.config.get("trader.market");
     this._underlying = this.config.get("trader.underlying");
     this._currency = this.config.get("trader.currency");
     this._delta = this.config.get("trader.delta");
     this._budget = this.config.get("trader.budget");
+    this._delay = this.config.get("trader.delay"); // min(s)
+    this._loosingLevel = 0.5;
+    this._loosingExitSize = 0.5;
+    this._x2WinningLevel = 2;
+    this._x2ExitSize = 0.5;
+    this._x3WinningLevel = 3;
+    this._x3ExitSize = 1 / 3;
+
+    // For debugging/replay purpose
     if (this.config.has("trader.event"))
       this._nextEvent = parseEvent(this.config.get("trader.event"));
     if (this.config.has("trader.state"))
@@ -92,14 +106,38 @@ export class Trader {
   }
 
   public toString(): string {
-    return `Pause: ${this._pause}
+    return `Event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
 Market: ${this._market}
 Underlying: ${this._underlying}
 Currency: ${this._currency}
-Next event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
 Delta: ${this._delta}
 Budget: ${this._budget}
+---
+Now: ${new Date().toISOString()}
+Pause: ${this._pause}
 Status: ${this._globalStatus.status}`;
+  }
+
+  public explain(): string {
+    return `"Tony's Millionaire Fastlane (TMF)" strategy:
+We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
+
+Trade entry:
+We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency} during the last ${this._delay} minute(s) before the event.
+Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
+
+Early (loosing) exit conditions:
+We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading below ${this._loosingLevel * 100}% of its entry price.
+
+Winning exits conditions:
+We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price.
+We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any leg reaching ${this._x3WinningLevel * 100}% of its entry price.
+
+Notes:
+Any unsold position may be lost at the end of the trading day.
+Under normal market conditions, we should not lose a lot more than ${this._loosingExitSize * this._budget} ${this._currency}.
+Conditions will be checked approximately every minute; therefore, any condition that is met for less than this delay may be ignored.
+🤞`;
   }
 
   public get pause(): boolean {
@@ -160,6 +198,13 @@ Status: ${this._globalStatus.status}`;
 
   public get status(): StatusType {
     return this._globalStatus.status;
+  }
+
+  public get delay(): number {
+    return this._delay;
+  }
+  public set delay(value: number) {
+    this._delay = value;
   }
 
   public async start(): Promise<void> {
@@ -238,7 +283,7 @@ Status: ${this._globalStatus.status}`;
   private async processIdleState(): Promise<void> {
     const now = Date.now();
     const eventDelay = Math.floor((this.nextEvent! - now) / 60_000); // in mins
-    if (eventDelay < 1) {
+    if (eventDelay < this._delay) {
       gLogger.info("Trader.processIdleState", "Time for trading!");
       this.nextEvent = undefined;
 
@@ -278,12 +323,19 @@ Status: ${this._globalStatus.status}`;
                   twoLegsContracts[leg]!.expiry,
                 )
                 .then((dealReference) => {
-                  this.globalStatus[leg] = {
-                    contract: twoLegsContracts[leg]!,
-                    dealReference,
-                    dealConfirmation: undefined,
-                    position: undefined,
-                  };
+                  return this.api
+                    .tradeConfirm(dealReference)
+                    .then((dealConfirmation) => {
+                      this.globalStatus[leg] = {
+                        contract: twoLegsContracts[leg]!,
+                        dealReference,
+                        dealConfirmation,
+                        position: undefined,
+                        loosingPartSold: false,
+                        x2PartSold: false,
+                        x3PartSold: false,
+                      };
+                    });
                 });
             }),
           Promise.resolve(),
@@ -315,77 +367,29 @@ Status: ${this._globalStatus.status}`;
     }
   }
 
-  private processDealingState(): Promise<void> {
+  private processDealingState(): void {
     // Update deal confirmation
-    return legtypes
-      .reduce(
-        (p, leg) =>
-          p.then(() => {
-            const legData: LegDealStatus = this.globalStatus[leg]!;
-            if (legData.dealReference && !legData.dealConfirmation) {
-              return this.api
-                .tradeConfirm(legData.dealReference)
-                .then((dealConfirmation) => {
-                  legData.dealConfirmation = dealConfirmation;
-                  if (
-                    legData.dealConfirmation.dealStatus != DealStatus.ACCEPTED
-                  )
-                    gLogger.error(
-                      "Trader.processDealingState",
-                      `Failed to place ${leg} entry order: ${legData.dealConfirmation.reason}`,
-                    );
-                });
-            }
-          }),
-        Promise.resolve(),
-      )
-      .then(() => {
-        // When all deals accepted we can move to next step
-        if (
-          legtypes.reduce(
-            (p, leg) =>
-              (
-                this.globalStatus[leg]!.dealConfirmation?.dealStatus ==
-                DealStatus.ACCEPTED
-              ) ?
-                p
-              : false,
-            true,
-          )
-        ) {
-          this.globalStatus.status = StatusType.Position;
-        }
-        // If none deal accepted move back to idle state, and pause trader
-        if (
-          legtypes.reduce(
-            (p, leg) =>
-              (
-                this.globalStatus[leg]!.dealConfirmation?.dealStatus !=
-                DealStatus.ACCEPTED
-              ) ?
-                p
-              : false,
-            true,
-          )
-        ) {
-          this.globalStatus.status = StatusType.Idle;
-          this._pause = true;
-        }
-      });
+    const positionsComplete = legtypes.reduce(
+      (p, leg) => (this._globalStatus[leg]?.position ? p : false),
+      true,
+    );
+    if (positionsComplete) this._globalStatus.status = StatusType.Position;
   }
 
   private async updatePositions(): Promise<void> {
     const positions = (await this.api.getPositions()).positions;
     // console.log(positions);
     legtypes.forEach((leg) => {
-      const legData: LegDealStatus = this.globalStatus[leg]!;
-      const position = positions.find(
-        (item) =>
-          item.position.dealReference ==
-          legData.dealConfirmation!.dealReference,
-      );
-      legData.position = position?.position;
-      if (position) legData.contract = position.market;
+      const legData: LegDealStatus | undefined = this.globalStatus[leg];
+      if (legData) {
+        const position = positions.find(
+          (item) =>
+            item.position.dealReference ==
+            legData.dealConfirmation!.dealReference,
+        );
+        legData.position = position?.position;
+        if (position) legData.contract = position.market;
+      }
     });
   }
 
@@ -395,7 +399,8 @@ Status: ${this._globalStatus.status}`;
     posRelative = false,
   ): Promise<DealConfirmation> {
     const legData: LegDealStatus = this.globalStatus[leg]!;
-    const relSize = Math.round(legData.position!.size * percent * 100) / 100; // Relative to current position
+    let relSize = Math.round(legData.position!.size * percent * 100) / 100; // Relative to current position
+    if (relSize < 0.01) relSize = 0.01;
     let absSize =
       Math.round(legData.dealConfirmation!.size * percent * 100) / 100; // Relative to initial position
     if (absSize > legData.position!.size) absSize = legData.position!.size;
@@ -435,7 +440,7 @@ Status: ${this._globalStatus.status}`;
       legData.position &&
       legData.position.size > 0 &&
       legData.contract.bid &&
-      legData.contract.bid < legData.dealConfirmation.level * 0.5
+      legData.contract.bid < legData.dealConfirmation.level * this._loosingLevel
     );
   }
 
@@ -466,12 +471,11 @@ Status: ${this._globalStatus.status}`;
                 `${leg} becomes winning leg, selling 50% of position`,
               );
               this._globalStatus.status = StatusType.Won;
-              this._globalStatus.winningLeg = leg;
               return (
                 // Sell 50% of loosing leg
-                this.closeLeg(oppositeLeg(leg), 0.5)
+                this.closeLeg(oppositeLeg(leg), this._loosingExitSize)
                   // Then sell 50% of winning leg
-                  .then(() => this.closeLeg(leg, 0.5))
+                  .then(() => this.closeLeg(leg, this._x2ExitSize))
                   .then(() => undefined)
               );
             } else if (this.isLoosing(leg)) {
@@ -502,7 +506,6 @@ Status: ${this._globalStatus.status}`;
         status: StatusType.Idle,
         [LegTypeEnum.Put]: undefined,
         [LegTypeEnum.Call]: undefined,
-        winningLeg: undefined,
       };
       const accounts = await this.api.getAccounts();
       gLogger.debug("Trader.check", accounts);
@@ -515,7 +518,7 @@ Status: ${this._globalStatus.status}`;
     return accounts.accounts[0];
   }
 
-  public async check(): Promise<void> {
+  public async check0(): Promise<void> {
     gLogger.trace(
       "Trader.check",
       this.globalStatus.status,
@@ -539,11 +542,71 @@ Status: ${this._globalStatus.status}`;
     }
   }
 
+  private async processOneLeg(leg: LegType): Promise<void> {
+    const legData: LegDealStatus | undefined = this.globalStatus[leg];
+    if (
+      legData &&
+      legData.contract &&
+      legData.dealConfirmation &&
+      legData.position
+    ) {
+      const winRatio = legData.contract.bid! / legData.dealConfirmation.level;
+      if (winRatio < this._loosingLevel && !legData.loosingPartSold) {
+        return this.closeLeg(leg, this._loosingExitSize).then(
+          (_dealConfirmation) => {
+            legData.loosingPartSold = true;
+          },
+        );
+      } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
+        return this.closeLeg(leg, this._x3ExitSize).then(
+          (_dealConfirmation) => {
+            legData.x3PartSold = true;
+          },
+        );
+      } else if (winRatio > this._x2WinningLevel && !legData.x2PartSold) {
+        return this.closeLeg(leg, this._x2ExitSize).then(
+          (_dealConfirmation) => {
+            legData.x2PartSold = true;
+          },
+        );
+      }
+    } else {
+      gLogger.error(
+        "Trader.processOneLeg",
+        `${leg} leg missing or incomplete!`,
+      );
+    }
+    return Promise.resolve();
+  }
+
+  public async check(): Promise<void> {
+    gLogger.trace(
+      "Trader.check",
+      this.globalStatus.status,
+      this._pause ? "paused" : "running",
+    );
+    if (!this._pause) {
+      if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
+        await this.processIdleState(); // Open positions when conditions are met
+      } else {
+        await this.updatePositions(); // Update all positions
+        if (this._globalStatus.status == StatusType.Dealing)
+          this.processDealingState(); // Check if all positions are open
+        if (this._globalStatus.status == StatusType.Position) {
+          await Promise.all(legtypes.map((leg) => this.processOneLeg(leg))); // Monitor open positions
+          await this.processWonState(); // Check if all positions are over
+        }
+      }
+      gLogger.trace("Trader.check", this.globalStatus);
+    }
+  }
+
   public stop(): Promise<void> {
     return this.api.rest.login.logout();
   }
 
-  public getPositions(): Record<LegType, Position | undefined> {
+  public async getPositions(): Promise<Record<LegType, Position | undefined>> {
+    await this.updatePositions();
     const result = legtypes.reduce(
       (p, leg: LegType) => {
         p[leg] = this.globalStatus[leg]?.position;
