@@ -213,7 +213,7 @@ export class APIClient {
       case "put":
         return this.api.put(url, params, { headers });
       default:
-        throw Error("ApiClient.call: method not implemented!");
+        throw Error("APIClient.call: method not implemented!");
     }
   }
 
@@ -227,7 +227,7 @@ export class APIClient {
       .catch((error: AxiosError) => {
         if (
           error.response &&
-          error.response.status == 400 &&
+          [400, 401].includes(error.response.status) &&
           error.response.data
         ) {
           gLogger.log(
@@ -239,6 +239,37 @@ export class APIClient {
           const errorData = error.response.data as {
             errorCode: string;
           };
+          if (errorData.errorCode == "error.security.oauth-token-invalid") {
+            // Reconnect session
+            this.oauthToken = undefined;
+            return this.submit_request(
+              IgApiEndpoint.CreateSession,
+              {
+                encryptedPassword: false,
+                identifier: this.identifier,
+                password: this.password,
+              },
+              { Version: "3" },
+            )
+              .then((response) => {
+                this.oauthToken = response.data.oauthToken;
+                // And retry
+                return this.submit_request(api, params, headers);
+              })
+              .then((response) => response.data as T)
+              .catch((error: AxiosError) => {
+                const errorData = error.response?.data as {
+                  errorCode: string;
+                };
+                gLogger.log(
+                  LogLevel.Error,
+                  "APIClient.call:3",
+                  undefined,
+                  errorData.errorCode,
+                );
+                throw Error(errorData.errorCode);
+              });
+          }
           gLogger.log(
             LogLevel.Error,
             "APIClient.call:1",
@@ -263,33 +294,38 @@ export class APIClient {
     identifier: string,
     password: string,
   ): Promise<TradingSession> {
-    gLogger.trace("ApiClient.createSession", "connecting");
-    return this.call(
+    gLogger.trace("APIClient.createSession", "connecting", identifier);
+    this.identifier = identifier;
+    this.password = password;
+    this.oauthToken = undefined;
+    return this.call<TradingSession>(
       IgApiEndpoint.CreateSession,
       {
         encryptedPassword: false,
-        identifier,
-        password,
+        identifier: this.identifier,
+        password: this.password,
       },
       { Version: "3" },
     ).then((session) => {
       this.accountId = session.accountId;
       this.oauthToken = session.oauthToken;
-      this.keepalive = setTimeout(
-        () => this.heartbeat(),
-        parseInt(this.oauthToken!.expires_in) * 500, // renew token twice as frequently as needed
-      );
-      return session as TradingSession;
+      if (!this.keepalive) {
+        this.keepalive = setTimeout(
+          () => this.heartbeat(),
+          parseInt(this.oauthToken!.expires_in) * 500, // renew token twice as frequently as needed
+        );
+      }
+      return session;
     });
   }
 
   private heartbeat(): void {
-    gLogger.trace("ApiClient.heartbeat");
+    gLogger.trace("APIClient.heartbeat");
     this.call<OauthToken>(IgApiEndpoint.RefreshSession, {
       refresh_token: this.oauthToken!.refresh_token,
     })
       .then((response) => {
-        gLogger.trace("ApiClient.heartbeat", response);
+        gLogger.trace("APIClient.heartbeat", response);
         this.oauthToken = response;
         this.keepalive = setTimeout(
           () => this.heartbeat(),
@@ -297,8 +333,8 @@ export class APIClient {
         );
       })
       .catch((error) => {
-        gLogger.log(LogLevel.Error, "ApiClient.heartbeat", undefined, error);
         console.error(error);
+        gLogger.error("APIClient.heartbeat", error.message);
         // Trying to reconnect
         return this.createSession(this.identifier!, this.password!);
       });
@@ -355,7 +391,7 @@ export class APIClient {
     endDate: Date,
   ): Promise<MarketSearch> {
     gLogger.debug(
-      "ApiClient.getHistoryPrices",
+      "APIClient.getHistoryPrices",
       epic,
       resolution,
       startDate,
