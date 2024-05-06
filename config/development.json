@@ -1,7 +1,6 @@
 {
   "trader": {
-    "event": "2024-05-09T12:30:00.000Z",
-    "budget": 20,
+    "event": "+5",
     "state": {
       "status": "Idle"
     }

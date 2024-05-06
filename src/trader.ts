@@ -119,7 +119,7 @@ Status: ${this._globalStatus.status}`;
   }
 
   public explain(): string {
-    return `"Tony's Millionaire Fastlane (TMF)" strategy:
+    return `"rylorin's Millionaire Fastlane (RMF)" strategy:
 We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
 Trade entry:
@@ -128,13 +128,14 @@ Each leg will be at a distance of ${this._delta} from the ${this._underlying} le
 
 Early (loosing) exit conditions:
 We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading below ${this._loosingLevel * 100}% of its entry price.
+If both legs are loosing, we will close all positions.
 
 Winning exits conditions:
-We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price.
+We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simustaneously close the opposite leg.
 We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any leg reaching ${this._x3WinningLevel * 100}% of its entry price.
 
 Notes:
-Any unsold position may be lost at the end of the trading day.
+Any unsold part of a position may be lost at the end of the trading day.
 Under normal market conditions, we should not lose a lot more than ${this._loosingExitSize * this._budget} ${this._currency}.
 Conditions will be checked approximately every minute; therefore, any condition that is met for less than this delay may be ignored.
 🤞`;
@@ -335,6 +336,10 @@ Conditions will be checked approximately every minute; therefore, any condition 
                         x2PartSold: false,
                         x3PartSold: false,
                       };
+                      gLogger.info(
+                        "Trader.processIdleState",
+                        `${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
+                      );
                     });
                 });
             }),
@@ -579,6 +584,25 @@ Conditions will be checked approximately every minute; therefore, any condition 
     return Promise.resolve();
   }
 
+  private processBothLegs(): Promise<void> {
+    if (this.allLoosing()) {
+      gLogger.info(
+        "Trader.processBothLegs",
+        "All legs are loosing, exiting positions.",
+      );
+      // Exit all positions
+      return legtypes.reduce(
+        (p, leg) =>
+          p.then(() => this.closeLeg(leg, 1, true).then(() => undefined)),
+        Promise.resolve(),
+      );
+    } else {
+      return Promise.all(legtypes.map((leg) => this.processOneLeg(leg))).then(
+        () => undefined,
+      ); // Monitor open positions
+    }
+  }
+
   public async check(): Promise<void> {
     gLogger.trace(
       "Trader.check",
@@ -593,7 +617,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
         if (this._globalStatus.status == StatusType.Dealing)
           this.processDealingState(); // Check if all positions are open
         if (this._globalStatus.status == StatusType.Position) {
-          await Promise.all(legtypes.map((leg) => this.processOneLeg(leg))); // Monitor open positions
+          await this.processBothLegs();
           await this.processWonState(); // Check if all positions are over
         }
       }

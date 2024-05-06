@@ -334,7 +334,7 @@ export class APIClient {
       })
       .catch((error) => {
         console.error(error);
-        gLogger.error("APIClient.heartbeat", error.message);
+        gLogger.error("APIClient.heartbeat", error.message as string);
         // Trying to reconnect
         return this.createSession(this.identifier!, this.password!);
       });
