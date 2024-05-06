@@ -464,7 +464,6 @@ export class APIClient {
       timeInForce: PositionTimeInForce.EXECUTE_AND_ELIMINATE,
     };
     gLogger.trace("APIClient.closePosition", closePositionRequest);
-    console.log("closePositionRequest", JSON.stringify(closePositionRequest));
     return this.call<DealReferenceResponse>(
       IgApiEndpoint.ClosePosition,
       closePositionRequest,

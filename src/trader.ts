@@ -11,6 +11,16 @@ import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
 import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
 
+export type PositionEntry = {
+  instrumentName: string;
+  size: number;
+  open: number;
+  bid: number;
+  value: number;
+  pnl: number;
+  ratio: number;
+};
+
 const StatusType = {
   Idle: "Idle",
   Dealing: "Dealing",
@@ -25,7 +35,7 @@ export const LegTypeEnum = {
 } as const;
 export type LegType = (typeof LegTypeEnum)[keyof typeof LegTypeEnum];
 
-const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
+export const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
 type LegDealStatus = {
   contract: Market;
@@ -398,31 +408,33 @@ Conditions will be checked approximately every minute; therefore, any condition 
     });
   }
 
-  private async closeLeg(
+  public async closeLeg(
     leg: LegType,
     percent: number,
     posRelative = false,
   ): Promise<DealConfirmation> {
-    const legData: LegDealStatus = this.globalStatus[leg]!;
-    let relSize = Math.round(legData.position!.size * percent * 100) / 100; // Relative to current position
-    if (relSize < 0.01) relSize = 0.01;
-    let absSize =
-      Math.round(legData.dealConfirmation!.size * percent * 100) / 100; // Relative to initial position
-    if (absSize > legData.position!.size) absSize = legData.position!.size;
-    return this.api
-      .closePosition(
-        legData.position!.dealId,
-        posRelative ? relSize : absSize,
-        legData.contract!.bid! / 2,
-      )
-      .then((dealReference) => this.api.tradeConfirm(dealReference))
-      .then((dealConfirmation) => {
-        gLogger.info(
-          "Trader.processPositionState",
-          `${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
-        );
-        return dealConfirmation;
-      });
+    const legData = this.globalStatus[leg];
+    if (legData && legData.position && legData.position.size > 0) {
+      let relSize = Math.round(legData.position!.size * percent * 100) / 100; // Relative to current position
+      if (relSize < 0.01) relSize = 0.01;
+      let absSize =
+        Math.round(legData.dealConfirmation!.size * percent * 100) / 100; // Relative to initial position
+      if (absSize > legData.position!.size) absSize = legData.position!.size;
+      return this.api
+        .closePosition(
+          legData.position!.dealId,
+          posRelative ? relSize : absSize,
+          legData.contract!.bid! / 2,
+        )
+        .then((dealReference) => this.api.tradeConfirm(dealReference))
+        .then((dealConfirmation) => {
+          gLogger.info(
+            "Trader.processPositionState",
+            `${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
+          );
+          return dealConfirmation;
+        });
+    } else throw Error(`No such leg or positions closed for "${leg}" leg`);
   }
 
   private isWinning(leg: LegType): boolean {
@@ -553,7 +565,8 @@ Conditions will be checked approximately every minute; therefore, any condition 
       legData &&
       legData.contract &&
       legData.dealConfirmation &&
-      legData.position
+      legData.position &&
+      legData.position.size > 0
     ) {
       const winRatio = legData.contract.bid! / legData.dealConfirmation.level;
       if (winRatio < this._loosingLevel && !legData.loosingPartSold) {
@@ -575,11 +588,6 @@ Conditions will be checked approximately every minute; therefore, any condition 
           },
         );
       }
-    } else {
-      gLogger.error(
-        "Trader.processOneLeg",
-        `${leg} leg missing or incomplete!`,
-      );
     }
     return Promise.resolve();
   }
@@ -629,14 +637,30 @@ Conditions will be checked approximately every minute; therefore, any condition 
     return this.api.rest.login.logout();
   }
 
-  public async getPositions(): Promise<Record<LegType, Position | undefined>> {
+  public async getPositions(): Promise<
+    Record<LegType, PositionEntry | undefined>
+  > {
     await this.updatePositions();
     const result = legtypes.reduce(
       (p, leg: LegType) => {
-        p[leg] = this.globalStatus[leg]?.position;
+        const legData = this.globalStatus[leg];
+        p[leg] =
+          legData?.position ?
+            {
+              instrumentName: legData.contract.instrumentName,
+              size: legData.position.size,
+              open: legData.position.level,
+              bid: legData.contract.bid!,
+              value: legData.position.size * legData.contract.bid!,
+              pnl:
+                legData.position.size *
+                (legData.contract.bid! - legData.position.level),
+              ratio: legData.contract.bid! / legData.position.level,
+            }
+          : undefined;
         return p;
       },
-      {} as Record<LegType, Position | undefined>,
+      {} as Record<LegType, PositionEntry | undefined>,
     );
     return result;
   }

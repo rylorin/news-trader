@@ -1,6 +1,6 @@
 {
   "trader": {
-    "event": "+5",
+    "event": "none",
     "state": {
       "status": "Idle"
     }

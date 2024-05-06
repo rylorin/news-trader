@@ -15,7 +15,7 @@ import { message } from "telegraf/filters";
 import { Message, Update } from "telegraf/typings/core/types/typegram";
 import { CommandContextExtn } from "telegraf/typings/telegram-types";
 import { gLogger, LogLevel } from "./logger";
-import { LegType, Trader } from "./trader";
+import { LegType, legtypes, Trader } from "./trader";
 import { formatObject, parseEvent, string2boolean } from "./utils";
 
 export class MyTradingBotApp {
@@ -61,6 +61,7 @@ export class MyTradingBotApp {
       this.telegram.command("positions", (ctx) =>
         this.handlePositionsCommand(ctx),
       );
+      this.telegram.command("close", (ctx) => this.handleCloseCommand(ctx));
       this.telegram.command("account", (ctx) => this.handleAccountCommand(ctx));
       this.telegram.command("explain", (ctx) => this.handleExplainCommand(ctx));
       // Catch-alls
@@ -354,6 +355,57 @@ export class MyTradingBotApp {
       gLogger.log(
         LogLevel.Error,
         "MyTradingBotApp.handlePositionsCommand",
+        undefined,
+        err,
+      );
+    }
+  }
+
+  private async handleCloseCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleCloseCommand",
+      "Handle 'close' command",
+    );
+    try {
+      let legs: LegType[];
+      if (ctx.payload) {
+        const text = ctx.payload.trim().replaceAll("  ", " ");
+        legs = text
+          .split(" ")
+          .map(
+            (text) =>
+              (text.charAt(0).toUpperCase() +
+                text.slice(1).toLowerCase()) as LegType,
+          );
+      } else legs = legtypes;
+      // console.log(legs);
+      await legs.reduce(
+        (p, leg) =>
+          p
+            .then(() => this.trader.closeLeg(leg, 1, true))
+            .then((dealConfirmation) =>
+              ctx.reply(
+                `${leg}: ${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
+              ),
+            )
+            .then(() => undefined)
+            .catch((err: Error) =>
+              gLogger.error("MyTradingBotApp.handleCloseCommand", err.message),
+            ),
+        Promise.resolve(),
+      );
+    } catch (err) {
+      console.error(err);
+      gLogger.log(
+        LogLevel.Error,
+        "MyTradingBotApp.handleCloseCommand",
         undefined,
         err,
       );
