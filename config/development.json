@@ -1,8 +1,8 @@
 {
   "trader": {
-    "event": "none",
+    "event": "+63",
     "state": {
-      "status": "Idle"
+      "status": "Position"
     }
   }
 }

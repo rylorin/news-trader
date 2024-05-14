@@ -41,6 +41,7 @@ export default tseslint.config(
       "@typescript-eslint/restrict-plus-operands": "error",
       "@typescript-eslint/restrict-template-expressions": "error",
       "@typescript-eslint/unbound-method": "error",
+      "@typescript-eslint/promise-function-async": "warn",
       "no-unsafe-optional-chaining": "error",
       "no-unused-vars": "off", // off required as we use the @typescript-eslint/no-unused-vars rule
       // "rxjs/no-async-subscribe": "warn",

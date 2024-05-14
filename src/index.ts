@@ -32,46 +32,73 @@ export class MyTradingBotApp {
     if (this.config.get("telegram.apiKey")) {
       // Create telegram bot to control application
       this.telegram = new Telegraf(this.config.get("telegram.apiKey"));
-      this.telegram.start((ctx) =>
+      this.telegram.start(async (ctx) =>
         ctx.reply(`Welcome ${ctx.message.from.username}!`),
       );
-      this.telegram.help((ctx) => ctx.reply("Send me a sticker"));
-      this.telegram.on(message("sticker"), (ctx) => ctx.reply("👍"));
+      this.telegram.help(async (ctx) => ctx.reply("Send me a sticker"));
+      this.telegram.on(message("sticker"), async (ctx) => ctx.reply("👍"));
       // Bot commands
-      this.telegram.command("exit", (ctx) => this.handleExitCommand(ctx));
-      this.telegram.command("whoami", (ctx) =>
+      this.telegram.command("exit", async (ctx) => this.handleExitCommand(ctx));
+      this.telegram.command("whoami", async (ctx) =>
         ctx.reply(formatObject(ctx.update)),
       );
       // Trader settings commands
-      this.telegram.command("pause", (ctx) => this.handlePauseCommand(ctx));
-      this.telegram.command("market", (ctx) => this.handleMarketCommand(ctx));
-      this.telegram.command("underlying", (ctx) =>
+      this.telegram.command("pause", async (ctx) =>
+        this.handlePauseCommand(ctx),
+      );
+      this.telegram.command("market", async (ctx) =>
+        this.handleMarketCommand(ctx),
+      );
+      this.telegram.command("underlying", async (ctx) =>
         this.handleUnderlyingCommand(ctx),
       );
-      this.telegram.command("currency", (ctx) =>
+      this.telegram.command("currency", async (ctx) =>
         this.handleCurrencyCommand(ctx),
       );
-      this.telegram.command("price", (ctx) => this.handlePriceCommand(ctx));
-      this.telegram.command("event", (ctx) => this.handleEventCommand(ctx));
-      this.telegram.command("delta", (ctx) => this.handleDeltaCommand(ctx));
-      this.telegram.command("delay", (ctx) => this.handleDelayCommand(ctx));
-      this.telegram.command("budget", (ctx) => this.handleBudgetCommand(ctx));
-      this.telegram.command("status", (ctx) => this.handleStatusCommand(ctx));
-      this.telegram.command("state", (ctx) => this.handleStateCommand(ctx));
-      this.telegram.command("positions", (ctx) =>
+      this.telegram.command("price", async (ctx) =>
+        this.handlePriceCommand(ctx),
+      );
+      this.telegram.command("event", async (ctx) =>
+        this.handleEventCommand(ctx),
+      );
+      this.telegram.command("delta", async (ctx) =>
+        this.handleDeltaCommand(ctx),
+      );
+      this.telegram.command("delay", async (ctx) =>
+        this.handleDelayCommand(ctx),
+      );
+      this.telegram.command("sampling", async (ctx) =>
+        this.handleSamplingCommand(ctx),
+      );
+      this.telegram.command("budget", async (ctx) =>
+        this.handleBudgetCommand(ctx),
+      );
+      this.telegram.command("status", async (ctx) =>
+        this.handleStatusCommand(ctx),
+      );
+      this.telegram.command("state", async (ctx) =>
+        this.handleStateCommand(ctx),
+      );
+      this.telegram.command("positions", async (ctx) =>
         this.handlePositionsCommand(ctx),
       );
-      this.telegram.command("close", (ctx) => this.handleCloseCommand(ctx));
-      this.telegram.command("account", (ctx) => this.handleAccountCommand(ctx));
-      this.telegram.command("explain", (ctx) => this.handleExplainCommand(ctx));
+      this.telegram.command("close", async (ctx) =>
+        this.handleCloseCommand(ctx),
+      );
+      this.telegram.command("account", async (ctx) =>
+        this.handleAccountCommand(ctx),
+      );
+      this.telegram.command("explain", async (ctx) =>
+        this.handleExplainCommand(ctx),
+      );
       // Catch-alls
-      this.telegram.hears(/\/(.+)/, (ctx) => {
+      this.telegram.hears(/\/(.+)/, async (ctx) => {
         const cmd = ctx.match[1];
         return ctx.reply(
           `command not found: '/${cmd}'. Type '/help' for help.`,
         );
       });
-      this.telegram.hears(/(.+)/, (ctx) =>
+      this.telegram.hears(/(.+)/, async (ctx) =>
         ctx.reply(
           `Hello ${ctx.message.from.username}. What do you mean by '${ctx.text}'? 🧐`,
         ),
@@ -229,6 +256,29 @@ export class MyTradingBotApp {
       );
   }
 
+  private async handleSamplingCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleSamplingCommand",
+      "Handle 'sampling' command",
+    );
+    if (ctx.payload) {
+      const arg = ctx.payload.trim();
+      this.trader.sampling = parseInt(arg);
+    }
+    await ctx
+      .reply(`/sampling ${this.trader.sampling}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleSamplingCommand", err.message),
+      );
+  }
+
   private async handleBudgetCommand(
     ctx: Context<{
       message: Update.New & Update.NonChannel & Message.TextMessage;
@@ -266,7 +316,7 @@ export class MyTradingBotApp {
     );
     await this.trader
       .getUnderlyingPrice()
-      .then((price) => ctx.reply(`Underlying price: ${price}`))
+      .then(async (price) => ctx.reply(`Underlying price: ${price}`))
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handlePriceCommand", err.message),
       );
@@ -335,8 +385,8 @@ export class MyTradingBotApp {
     try {
       const positions = await this.trader.getPositions();
       await Object.keys(positions).reduce(
-        (p, leg) =>
-          p.then(() => {
+        async (p, leg) =>
+          p.then(async () => {
             const output = formatObject(positions[leg as LegType]);
             return ctx
               .reply(leg + ": " + output)
@@ -387,10 +437,10 @@ export class MyTradingBotApp {
       } else legs = legtypes;
       // console.log(legs);
       await legs.reduce(
-        (p, leg) =>
+        async (p, leg) =>
           p
-            .then(() => this.trader.closeLeg(leg, 1, true))
-            .then((dealConfirmation) =>
+            .then(async () => this.trader.closeLeg(leg, 1, true))
+            .then(async (dealConfirmation) =>
               ctx.reply(
                 `${leg}: ${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
               ),
@@ -427,7 +477,7 @@ export class MyTradingBotApp {
     try {
       return this.trader
         .getAccount()
-        .then((account) => ctx.reply(formatObject(account)))
+        .then(async (account) => ctx.reply(formatObject(account)))
         .then(() => undefined)
         .catch((err: Error) =>
           gLogger.error("MyTradingBotApp.handleAccountCommand", err.message),
@@ -487,30 +537,22 @@ export class MyTradingBotApp {
   public async start(): Promise<void> {
     await this.trader.start();
 
-    this.timer = setInterval(() => {
-      this.check().catch((err: Error) => {
-        console.log(err);
-        gLogger.error("MyTradingBotApp.check", err.message);
-      });
-    }, 60_000);
+    // this.timer = setInterval(() => {
+    //   this.check().catch((err: Error) => {
+    //     console.log(err);
+    //     gLogger.error("MyTradingBotApp.check", err.message);
+    //   });
+    // }, 10_000);
 
     await this.telegram?.launch(() => undefined); // WARNING: this call never returns
   }
 
   private async check(): Promise<void> {
     gLogger.trace("MyTradingBotApp.check");
-
-    // if (!this.trader.nextEvent && !this.trader.status) {
-    //   await fetch("https://www.investing.com/economic-calendar/")
-    //     .then((response) => response.text())
-    //     .then((text) => {console.log(text);
-    //     });
-    // }
-
     return this.trader.check();
   }
 
-  public stop(): Promise<void> {
+  public async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     return this.trader.stop();

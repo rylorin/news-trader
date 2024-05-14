@@ -70,11 +70,14 @@ export class Trader {
   private _nextEvent: number | undefined;
   private _loosingLevel: number;
   private _loosingExitSize: number;
+  private _delay: number;
   private readonly _x2WinningLevel: number;
   private readonly _x2ExitSize: number;
   private readonly _x3WinningLevel: number;
   private readonly _x3ExitSize: number;
-  private _delay: number;
+  private _sampling: number;
+  private timer: NodeJS.Timeout | undefined;
+  private started: boolean;
 
   constructor(config: IConfig) {
     this.config = config;
@@ -100,6 +103,8 @@ export class Trader {
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
     this._x3ExitSize = 1 / 3;
+    this._sampling = 10; // secs
+    this.started = false;
 
     // For debugging/replay purpose
     if (this.config.has("trader.event"))
@@ -148,7 +153,7 @@ We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any 
 Notes:
 Any unsold part of a position may be lost at the end of the trading day.
 Under normal market conditions, we should not lose more than ${Math.round(this._budget * 3 * this._loosingExitSize * this._loosingLevel * 100) / 100} ${this._currency}.
-Conditions will be checked approximately every minute; therefore, any condition that is met for less than this delay may be ignored.
+Conditions will be checked approximately every ${this._sampling} second${this._sampling > 1 ? "s" : ""}; therefore, any condition that is met for less than this delay may be ignored.
 🤞`;
   }
 
@@ -219,12 +224,26 @@ Conditions will be checked approximately every minute; therefore, any condition 
     this._delay = value;
   }
 
+  public get sampling(): number {
+    return this._sampling;
+  }
+  public set sampling(value: number) {
+    this._sampling = value;
+  }
+
   public async start(): Promise<void> {
     const session = await this.api.rest.login.createSession(
       this.config.get("ig-api.username"),
       this.config.get("ig-api.password"),
     );
     gLogger.info("Trader.start", `Client ID is "${session.clientId}".`);
+    this.started = true;
+    this.timer = setTimeout(() => {
+      this.check().catch((err: Error) => {
+        console.log(err);
+        gLogger.error("MyTradingBotApp.check", err.message);
+      });
+    }, 10_000);
   }
 
   private async getDailyOptionsOf(market: string): Promise<Market[]> {
@@ -292,6 +311,34 @@ Conditions will be checked approximately every minute; therefore, any condition 
     );
   }
 
+  private lastCount: number | undefined;
+
+  private displayCountDown(eventDelay: number): void {
+    if (this.lastCount == eventDelay) return;
+    if (eventDelay >= 60) {
+      if (eventDelay % 60 == 0)
+        // Display countdown every one hour
+        gLogger.info(
+          "Trader.processIdleState",
+          `${eventDelay / 60} hour(s) before trading.`,
+        );
+    } else if (eventDelay >= 10) {
+      if (eventDelay % 10 == 0)
+        // Display countdown every ten mins
+        gLogger.info(
+          "Trader.processIdleState",
+          `${eventDelay} min(s) before trading.`,
+        );
+    } else if (eventDelay > 0) {
+      // Display countdown every min
+      gLogger.info(
+        "Trader.processIdleState",
+        `${eventDelay} min(s) before trading.`,
+      );
+    }
+    this.lastCount = eventDelay;
+  }
+
   private async processIdleState(): Promise<void> {
     const now = Date.now();
     const eventDelay = Math.floor((this.nextEvent! - now) / 60_000); // in mins
@@ -320,8 +367,8 @@ Conditions will be checked approximately every minute; therefore, any condition 
         );
 
         await legtypes.reduce(
-          (p, leg) =>
-            p.then(() => {
+          async (p, leg) =>
+            p.then(async () => {
               gLogger.info(
                 "Trader.processIdleState",
                 `Buy ${size} ${twoLegsContracts[leg]!.instrumentName} @ ${twoLegsContracts[leg]!.offer} ${this._currency}`,
@@ -334,7 +381,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
                   twoLegsContracts[leg]!.offer! * 2, // To make sure to be executed even in case of price change
                   twoLegsContracts[leg]!.expiry,
                 )
-                .then((dealReference) => {
+                .then(async (dealReference) => {
                   return this.api
                     .tradeConfirm(dealReference)
                     .then((dealConfirmation) => {
@@ -362,25 +409,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
           "No daily options or can't guess underlying price!",
         );
       }
-    } else {
-      // Display count down
-      if (eventDelay >= 60) {
-        if (eventDelay % 60 == 0)
-          gLogger.info(
-            "Trader.processIdleState",
-            `${eventDelay / 60} hour(s) before trading.`,
-          );
-      } else {
-        let display = false;
-        if (eventDelay >= 10 && eventDelay % 10 == 0) display = true;
-        else if (eventDelay <= 10) display = true;
-        if (display)
-          gLogger.info(
-            "Trader.processIdleState",
-            `${eventDelay} min(s) before trading.`,
-          );
-      }
-    }
+    } else this.displayCountDown(eventDelay);
   }
 
   private processDealingState(): void {
@@ -392,7 +421,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
     if (positionsComplete) this._globalStatus.status = StatusType.Position;
   }
 
-  private updatePositions(): Promise<void> {
+  private async updatePositions(): Promise<void> {
     return this.api.getPositions().then((response) => {
       legtypes.forEach((leg) => {
         const legData: LegDealStatus | undefined = this.globalStatus[leg];
@@ -427,7 +456,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
           posRelative ? relSize : absSize,
           legData.contract!.bid! / 2,
         )
-        .then((dealReference) => this.api.tradeConfirm(dealReference))
+        .then(async (dealReference) => this.api.tradeConfirm(dealReference))
         .then((dealConfirmation) => {
           gLogger.info(
             "Trader.processPositionState",
@@ -439,26 +468,30 @@ Conditions will be checked approximately every minute; therefore, any condition 
   }
 
   private isWinning(leg: LegType): boolean {
-    const legData: LegDealStatus = this.globalStatus[leg]!;
+    const legData: LegDealStatus | undefined = this.globalStatus[leg];
     return !!(
+      legData &&
       legData.contract &&
       legData.dealConfirmation &&
       legData.position &&
       legData.position.size > 0 &&
       legData.contract.bid &&
-      legData.contract.bid > legData.dealConfirmation.level * 2
+      legData.contract.bid >=
+        legData.dealConfirmation.level * this._x2WinningLevel
     );
   }
 
   private isLoosing(leg: LegType): boolean {
-    const legData: LegDealStatus = this.globalStatus[leg]!;
+    const legData: LegDealStatus | undefined = this.globalStatus[leg];
     return !!(
+      legData &&
       legData.contract &&
       legData.dealConfirmation &&
       legData.position &&
       legData.position.size > 0 &&
       legData.contract.bid &&
-      legData.contract.bid < legData.dealConfirmation.level * this._loosingLevel
+      legData.contract.bid <=
+        legData.dealConfirmation.level * this._loosingLevel
     );
   }
 
@@ -474,15 +507,15 @@ Conditions will be checked approximately every minute; therefore, any condition 
       );
       // Exit all positions
       await legtypes.reduce(
-        (p, leg) =>
-          p.then(() => this.closeLeg(leg, 1, true).then(() => undefined)),
+        async (p, leg) =>
+          p.then(async () => this.closeLeg(leg, 1, true).then(() => undefined)),
         Promise.resolve(),
       );
     } else {
       // Wait for a winning leg
       await legtypes.reduce(
-        (p, leg) =>
-          p.then(() => {
+        async (p, leg) =>
+          p.then(async () => {
             if (this.isWinning(leg)) {
               gLogger.info(
                 "Trader.processPositionState",
@@ -493,7 +526,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
                 // Sell 50% of loosing leg
                 this.closeLeg(oppositeLeg(leg), this._loosingExitSize)
                   // Then sell 50% of winning leg
-                  .then(() => this.closeLeg(leg, this._x2ExitSize))
+                  .then(async () => this.closeLeg(leg, this._x2ExitSize))
                   .then(() => undefined)
               );
             } else if (this.isLoosing(leg)) {
@@ -526,8 +559,11 @@ Conditions will be checked approximately every minute; therefore, any condition 
         [LegTypeEnum.Call]: undefined,
       };
       const accounts = await this.api.getAccounts();
-      gLogger.debug("Trader.check", accounts);
-      gLogger.info("Trader.check", JSON.stringify(accounts.accounts[0]));
+      gLogger.debug("Trader.processWonState", accounts);
+      gLogger.info(
+        "Trader.processWonState",
+        JSON.stringify(accounts.accounts[0]),
+      );
     }
   }
 
@@ -536,29 +572,32 @@ Conditions will be checked approximately every minute; therefore, any condition 
     return accounts.accounts[0];
   }
 
-  public async check0(): Promise<void> {
-    gLogger.trace(
-      "Trader.check",
-      this.globalStatus.status,
-      this._pause ? "paused" : "running",
-    );
+  // public async check0(): Promise<void> {
+  //   gLogger.trace(
+  //     "Trader.check",
+  //     this.globalStatus.status,
+  //     this._pause ? "paused" : "running",
+  //   );
 
-    if (!this._pause) {
-      if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
-        await this.processIdleState();
-      } else if (this._globalStatus.status == StatusType.Dealing) {
-        await this.processDealingState();
-      } else if (this._globalStatus.status == StatusType.Position) {
-        await this.updatePositions(); // Update positions
-        await this.processPositionState();
-      } else if (this._globalStatus.status == StatusType.Won) {
-        await this.updatePositions();
-        await this.processWonState();
-      }
-
-      gLogger.trace("Trader.check", this.globalStatus);
-    }
-  }
+  //   if (!this._pause) {
+  //     if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
+  //       await this.processIdleState();
+  //     }
+  //     if (this._globalStatus.status != StatusType.Idle) {
+  //       await this.updatePositions();
+  //     }
+  //     if (this._globalStatus.status == StatusType.Dealing) {
+  //       this.processDealingState();
+  //     }
+  //     if (this._globalStatus.status == StatusType.Position) {
+  //       await this.processPositionState();
+  //     }
+  //     if (this._globalStatus.status == StatusType.Won) {
+  //       await this.processWonState();
+  //     }
+  //     gLogger.trace("Trader.check", this.globalStatus);
+  //   }
+  // }
 
   private async processOneLeg(leg: LegType): Promise<void> {
     const legData: LegDealStatus | undefined = this.globalStatus[leg];
@@ -593,7 +632,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
     return Promise.resolve();
   }
 
-  private processBothLegs(): Promise<void> {
+  private async processBothLegs(): Promise<void> {
     if (this.allLoosing()) {
       gLogger.info(
         "Trader.processBothLegs",
@@ -601,40 +640,62 @@ Conditions will be checked approximately every minute; therefore, any condition 
       );
       // Exit all positions
       return legtypes.reduce(
-        (p, leg) =>
-          p.then(() => this.closeLeg(leg, 1, true).then(() => undefined)),
+        async (p, leg) =>
+          p.then(async () => this.closeLeg(leg, 1, true).then(() => undefined)),
         Promise.resolve(),
       );
     } else {
-      return Promise.all(legtypes.map((leg) => this.processOneLeg(leg))).then(
-        () => undefined,
-      ); // Monitor open positions
+      return Promise.all(
+        legtypes.map(async (leg) => this.processOneLeg(leg)),
+      ).then(() => undefined); // Monitor open positions
     }
   }
 
+  private checkGuard: boolean | undefined; // Reentrancy guard
+
   public async check(): Promise<void> {
+    if (this.checkGuard) return;
     gLogger.trace(
       "Trader.check",
       this.globalStatus.status,
       this._pause ? "paused" : "running",
     );
-    if (!this._pause) {
-      if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
-        await this.processIdleState(); // Open positions when conditions are met
-      } else {
-        await this.updatePositions(); // Update all positions
-        if (this._globalStatus.status == StatusType.Dealing)
+    if (!this._pause && this.started) {
+      try {
+        this.checkGuard = true;
+        if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
+          await this.processIdleState(); // Open positions when conditions are met
+        }
+        if (this._globalStatus.status !== StatusType.Idle) {
+          await this.updatePositions(); // Update all positions
+        }
+        if (this._globalStatus.status == StatusType.Dealing) {
           this.processDealingState(); // Check if all positions are open
+        }
         if (this._globalStatus.status == StatusType.Position) {
           await this.processBothLegs();
           await this.processWonState(); // Check if all positions are over
         }
+      } catch (error: unknown) {
+        console.log(error);
+        gLogger.error("Trader.check", String(error));
+      } finally {
+        this.checkGuard = false;
+        this.timer = setTimeout(() => {
+          this.check().catch((err: Error) => {
+            console.log(err);
+            gLogger.error("MyTradingBotApp.check", err.message);
+          });
+        }, this._sampling * 1_000);
+        gLogger.trace("Trader.check", this.globalStatus);
       }
-      gLogger.trace("Trader.check", this.globalStatus);
     }
   }
 
-  public stop(): Promise<void> {
+  public async stop(): Promise<void> {
+    this.started = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
     return this.api.rest.login.logout();
   }
 

@@ -154,11 +154,11 @@ export class APIClient {
 
   public rest = {
     login: {
-      createSession: (
+      createSession: async (
         identifier: string,
         password: string,
       ): Promise<TradingSession> => this.createSession(identifier, password),
-      logout: (): Promise<void> => this.disconnect(),
+      logout: async (): Promise<void> => this.disconnect(),
     },
   };
 
@@ -179,7 +179,7 @@ export class APIClient {
     });
   }
 
-  private submit_request(
+  private async submit_request(
     api: IgApiEndpoint,
     params?: Record<string, any>,
     extraHeaders?: Record<string, string>,
@@ -217,14 +217,14 @@ export class APIClient {
     }
   }
 
-  private call<T extends Record<string, any>>(
+  private async call<T extends Record<string, any>>(
     api: IgApiEndpoint,
     params?: Record<string, any>,
     headers?: Record<string, any>,
   ): Promise<T> {
     return this.submit_request(api, params, headers) // {status:number; statusText:string;error:Record<string,any>;data:T}
       .then((response) => response.data as T)
-      .catch((error: AxiosError) => {
+      .catch(async (error: AxiosError) => {
         if (
           error.response &&
           [400, 401].includes(error.response.status) &&
@@ -256,7 +256,7 @@ export class APIClient {
               },
               { Version: "3" },
             )
-              .then((response) => {
+              .then(async (response) => {
                 this.oauthToken = response.data.oauthToken;
                 // And retry
                 return this.submit_request(api, params, headers);
@@ -295,7 +295,7 @@ export class APIClient {
       });
   }
 
-  public createSession(
+  public async createSession(
     identifier: string,
     password: string,
   ): Promise<TradingSession> {
@@ -337,7 +337,7 @@ export class APIClient {
           parseInt(this.oauthToken.expires_in) * 500, // renew token twice as frequently as needed
         );
       })
-      .catch((error) => {
+      .catch(async (error) => {
         console.error(error);
         gLogger.error("APIClient.heartbeat", error.message as string);
         // Trying to reconnect
@@ -345,7 +345,7 @@ export class APIClient {
       });
   }
 
-  public disconnect(): Promise<void> {
+  public async disconnect(): Promise<void> {
     if (this.keepalive) clearInterval(this.keepalive);
     this.keepalive = undefined;
     this.identifier = undefined;
@@ -353,14 +353,14 @@ export class APIClient {
     return this.call(IgApiEndpoint.Logout).then(() => undefined);
   }
 
-  public getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
+  public async getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarketNavigation", nodeId);
     return this.call(IgApiEndpoint.GetMarketNavigation, {
       nodeId,
     }) as Promise<MarketNavigation>;
   }
 
-  public getMarket(epic?: string): Promise<MarketNavigation> {
+  public async getMarket(epic?: string): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarket", epic);
     return this.call(
       IgApiEndpoint.GetMarket,
@@ -371,7 +371,7 @@ export class APIClient {
     ) as Promise<MarketNavigation>;
   }
 
-  public getMarkets(epics: string[]): Promise<MarketNavigation> {
+  public async getMarkets(epics: string[]): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarkets", epics);
     return this.call(
       IgApiEndpoint.GetMarkets,
@@ -382,14 +382,14 @@ export class APIClient {
     ) as Promise<MarketNavigation>;
   }
 
-  public searchMarkets(searchTerm: string): Promise<MarketSearch> {
+  public async searchMarkets(searchTerm: string): Promise<MarketSearch> {
     gLogger.trace("APIClient.searchMarkets", searchTerm);
     return this.call(IgApiEndpoint.SearchMarkets, {
       searchTerm,
     }) as Promise<MarketSearch>;
   }
 
-  public getHistoryPrices(
+  public async getHistoryPrices(
     epic: string,
     resolution: Resolution,
     startDate: Date,
@@ -414,12 +414,12 @@ export class APIClient {
     ) as Promise<MarketSearch>;
   }
 
-  public getAccounts(): Promise<AccountsResponse> {
+  public async getAccounts(): Promise<AccountsResponse> {
     gLogger.trace("APIClient.getAccounts");
     return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
   }
 
-  public createPosition(
+  public async createPosition(
     epic: string,
     currencyCode: string,
     size: number,
@@ -453,7 +453,7 @@ export class APIClient {
     ).then((response: DealReferenceResponse) => response.dealReference);
   }
 
-  public closePosition(
+  public async closePosition(
     dealId: string,
     size: number,
     level: number,
@@ -478,14 +478,14 @@ export class APIClient {
     });
   }
 
-  public tradeConfirm(dealReference: string): Promise<DealConfirmation> {
+  public async tradeConfirm(dealReference: string): Promise<DealConfirmation> {
     gLogger.trace("APIClient.tradeConfirm", dealReference);
     return this.call(IgApiEndpoint.TradeConfirm, {
       dealReference,
     }) as Promise<DealConfirmation>;
   }
 
-  public getPosition(dealId?: string): Promise<Position> {
+  public async getPosition(dealId?: string): Promise<Position> {
     gLogger.trace("APIClient.getPosition", dealId);
     return this.call(
       IgApiEndpoint.GetPosition,
@@ -498,7 +498,7 @@ export class APIClient {
     ) as Promise<Position>;
   }
 
-  public getPositions(): Promise<PositionListResponse> {
+  public async getPositions(): Promise<PositionListResponse> {
     gLogger.trace("APIClient.getPositions");
     return this.call(
       IgApiEndpoint.GetPositions,
