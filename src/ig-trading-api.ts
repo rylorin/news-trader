@@ -239,7 +239,12 @@ export class APIClient {
           const errorData = error.response.data as {
             errorCode: string;
           };
-          if (errorData.errorCode == "error.security.oauth-token-invalid") {
+          if (
+            [
+              "error.security.oauth-token-invalid",
+              "error.security.client-token-missing",
+            ].includes(errorData.errorCode)
+          ) {
             // Reconnect session
             this.oauthToken = undefined;
             return this.submit_request(

@@ -3,7 +3,7 @@ FROM node:20
 WORKDIR /root
 COPY package.json .
 COPY yarn.lock .
-RUN yarn install
+RUN yarn
 COPY tsconfig.json .
 COPY src/ ./src
 RUN yarn build

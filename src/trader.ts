@@ -13,6 +13,7 @@ import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
 
 export type PositionEntry = {
   instrumentName: string;
+  epic: string;
   size: number;
   open: number;
   bid: number;
@@ -116,7 +117,7 @@ export class Trader {
   }
 
   public toString(): string {
-    return `Event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
+    return `Event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"} (in ${this._nextEvent ? Math.round((this._nextEvent - Date.now()) / 60_000) : "undefined"} min(s))
 Market: ${this._market}
 Underlying: ${this._underlying}
 Currency: ${this._currency}
@@ -129,7 +130,7 @@ Status: ${this._globalStatus.status}`;
   }
 
   public explain(): string {
-    return `"rylorin's Millionaire Fastlane (RMF)" strategy:
+    return `News trader's strategy:
 We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
 Trade entry:
@@ -138,7 +139,7 @@ Each leg will be at a distance of ${this._delta} from the ${this._underlying} le
 
 Early (loosing) exit conditions:
 We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading below ${this._loosingLevel * 100}% of its entry price.
-If both legs are loosing, we will close all positions.
+If both legs are loosing, we will close the positions.
 
 Winning exits conditions:
 We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simustaneously close the opposite leg.
@@ -146,7 +147,7 @@ We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any 
 
 Notes:
 Any unsold part of a position may be lost at the end of the trading day.
-Under normal market conditions, we should not lose a lot more than ${this._loosingExitSize * this._budget} ${this._currency}.
+Under normal market conditions, we should not lose more than ${Math.round(this._budget * 3 * this._loosingExitSize * this._loosingLevel * 100) / 100} ${this._currency}.
 Conditions will be checked approximately every minute; therefore, any condition that is met for less than this delay may be ignored.
 🤞`;
   }
@@ -391,20 +392,20 @@ Conditions will be checked approximately every minute; therefore, any condition 
     if (positionsComplete) this._globalStatus.status = StatusType.Position;
   }
 
-  private async updatePositions(): Promise<void> {
-    const positions = (await this.api.getPositions()).positions;
-    // console.log(positions);
-    legtypes.forEach((leg) => {
-      const legData: LegDealStatus | undefined = this.globalStatus[leg];
-      if (legData) {
-        const position = positions.find(
-          (item) =>
-            item.position.dealReference ==
-            legData.dealConfirmation!.dealReference,
-        );
-        legData.position = position?.position;
-        if (position) legData.contract = position.market;
-      }
+  private updatePositions(): Promise<void> {
+    return this.api.getPositions().then((response) => {
+      legtypes.forEach((leg) => {
+        const legData: LegDealStatus | undefined = this.globalStatus[leg];
+        if (legData) {
+          const position = response.positions.find(
+            (item) =>
+              item.position.dealReference ==
+              legData.dealConfirmation!.dealReference,
+          );
+          legData.position = position?.position;
+          if (position) legData.contract = position.market;
+        }
+      });
     });
   }
 
@@ -648,6 +649,7 @@ Conditions will be checked approximately every minute; therefore, any condition 
           legData?.position ?
             {
               instrumentName: legData.contract.instrumentName,
+              epic: legData.contract.epic,
               size: legData.position.size,
               open: legData.position.level,
               bid: legData.contract.bid!,
