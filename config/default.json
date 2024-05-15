@@ -22,6 +22,7 @@
     "delta": 50,
     "budget": 1,
     "delay": 1,
-    "sampling": 30
+    "sampling": 30,
+    "stopLevel": 0.4
   }
 }

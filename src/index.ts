@@ -70,6 +70,9 @@ export class MyTradingBotApp {
       this.telegram.command("sampling", async (ctx) =>
         this.handleSamplingCommand(ctx),
       );
+      this.telegram.command("stoplevel", async (ctx) =>
+        this.handleLoseLevelCommand(ctx),
+      );
       this.telegram.command("budget", async (ctx) =>
         this.handleBudgetCommand(ctx),
       );
@@ -276,6 +279,29 @@ export class MyTradingBotApp {
       .reply(`/sampling ${this.trader.sampling}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleSamplingCommand", err.message),
+      );
+  }
+
+  private async handleLoseLevelCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleLoseLevelCommand",
+      "Handle 'stoplevel' command",
+    );
+    if (ctx.payload) {
+      const arg = ctx.payload.trim();
+      this.trader.stoplevel = parseFloat(arg);
+    }
+    await ctx
+      .reply(`/stoplevel ${this.trader.stoplevel}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleLoseLevelCommand", err.message),
       );
   }
 

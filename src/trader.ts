@@ -9,7 +9,7 @@ import { IConfig } from "config";
 import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
+import { deepCopy, parseEvent, string2boolean } from "./utils";
 
 export type PositionEntry = {
   instrumentName: string;
@@ -46,6 +46,7 @@ type LegDealStatus = {
   loosingPartSold: boolean;
   x2PartSold: boolean;
   x3PartSold: boolean;
+  ath?: number;
 };
 
 type DealingStatus = {
@@ -68,7 +69,7 @@ export class Trader {
   private _budget: number;
   private _globalStatus: DealingStatus;
   private _nextEvent: number | undefined;
-  private _loosingLevel: number;
+  private _stopLevel: number;
   private _loosingExitSize: number;
   private _delay: number;
   private readonly _x2WinningLevel: number;
@@ -97,13 +98,13 @@ export class Trader {
     this._delta = this.config.get("trader.delta");
     this._budget = this.config.get("trader.budget");
     this._delay = this.config.get("trader.delay"); // min(s)
-    this._loosingLevel = 0.5;
+    this._stopLevel = this.config.get("trader.stopLevel");
+    this._sampling = this.config.get("trader.sampling"); // secs
     this._loosingExitSize = 0.5;
     this._x2WinningLevel = 2;
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
     this._x3ExitSize = 1 / 3;
-    this._sampling = 10; // secs
     this.started = false;
 
     // For debugging/replay purpose
@@ -143,8 +144,7 @@ We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
 Early (loosing) exit conditions:
-We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading below ${this._loosingLevel * 100}% of its entry price.
-If both legs are loosing, we will close the positions.
+We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading ${this._stopLevel * 100}% below its high of the trading session.
 
 Winning exits conditions:
 We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simustaneously close the opposite leg.
@@ -152,7 +152,7 @@ We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any 
 
 Notes:
 Any unsold part of a position may be lost at the end of the trading day.
-Under normal market conditions, we should not lose more than ${Math.round(this._budget * 3 * this._loosingExitSize * this._loosingLevel * 100) / 100} ${this._currency}.
+Under normal market conditions, we should not lose more than ${this._budget - this._budget * (1 - this._stopLevel) * this._loosingExitSize} ${this._currency}.
 Conditions will be checked approximately every ${this._sampling} second${this._sampling > 1 ? "s" : ""}; therefore, any condition that is met for less than this delay may be ignored.
 🤞`;
   }
@@ -229,6 +229,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
   public set sampling(value: number) {
     this._sampling = value;
+  }
+
+  public get stoplevel(): number {
+    return this._stopLevel;
+  }
+  public set stoplevel(value: number) {
+    this._stopLevel = value;
   }
 
   public async start(): Promise<void> {
@@ -432,7 +439,12 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
               legData.dealConfirmation!.dealReference,
           );
           legData.position = position?.position;
-          if (position) legData.contract = position.market;
+          if (position) {
+            legData.contract = position.market;
+            if (!legData.ath) legData.ath = position.position.level;
+            if (legData.contract.bid! > legData.ath)
+              legData.ath = position.market.bid!;
+          }
         }
       });
     });
@@ -467,20 +479,6 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     } else throw Error(`No such leg or positions closed for "${leg}" leg`);
   }
 
-  private isWinning(leg: LegType): boolean {
-    const legData: LegDealStatus | undefined = this.globalStatus[leg];
-    return !!(
-      legData &&
-      legData.contract &&
-      legData.dealConfirmation &&
-      legData.position &&
-      legData.position.size > 0 &&
-      legData.contract.bid &&
-      legData.contract.bid >=
-        legData.dealConfirmation.level * this._x2WinningLevel
-    );
-  }
-
   private isLoosing(leg: LegType): boolean {
     const legData: LegDealStatus | undefined = this.globalStatus[leg];
     return !!(
@@ -491,54 +489,12 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       legData.position.size > 0 &&
       legData.contract.bid &&
       legData.contract.bid <=
-        legData.dealConfirmation.level * this._loosingLevel
+        legData.dealConfirmation.level * (1 - this._stopLevel)
     );
   }
 
   private allLoosing(): boolean {
     return legtypes.reduce((p, leg) => (this.isLoosing(leg) ? p : false), true);
-  }
-
-  private async processPositionState(): Promise<void> {
-    if (this.allLoosing()) {
-      gLogger.info(
-        "Trader.processPositionState",
-        "All legs are loosing, exiting positions.",
-      );
-      // Exit all positions
-      await legtypes.reduce(
-        async (p, leg) =>
-          p.then(async () => this.closeLeg(leg, 1, true).then(() => undefined)),
-        Promise.resolve(),
-      );
-    } else {
-      // Wait for a winning leg
-      await legtypes.reduce(
-        async (p, leg) =>
-          p.then(async () => {
-            if (this.isWinning(leg)) {
-              gLogger.info(
-                "Trader.processPositionState",
-                `${leg} becomes winning leg, selling 50% of position`,
-              );
-              this._globalStatus.status = StatusType.Won;
-              return (
-                // Sell 50% of loosing leg
-                this.closeLeg(oppositeLeg(leg), this._loosingExitSize)
-                  // Then sell 50% of winning leg
-                  .then(async () => this.closeLeg(leg, this._x2ExitSize))
-                  .then(() => undefined)
-              );
-            } else if (this.isLoosing(leg)) {
-              gLogger.info(
-                "Trader.processPositionState",
-                `${leg} potentially loosing leg!`,
-              );
-            }
-          }),
-        Promise.resolve(),
-      );
-    }
   }
 
   private legPosition(leg: LegType): number {
@@ -547,23 +503,22 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     else return 0;
   }
 
-  private async processWonState(): Promise<void> {
+  private processWonState(): void {
     const totalPositions = legtypes.reduce(
       (p, leg) => p + this.legPosition(leg),
       0,
     );
     if (!totalPositions) {
+      gLogger.info(
+        "Trader.processWonState",
+        `/state ${JSON.stringify(this._globalStatus)}`,
+      );
       this._globalStatus = {
         status: StatusType.Idle,
         [LegTypeEnum.Put]: undefined,
         [LegTypeEnum.Call]: undefined,
       };
-      const accounts = await this.api.getAccounts();
-      gLogger.debug("Trader.processWonState", accounts);
-      gLogger.info(
-        "Trader.processWonState",
-        JSON.stringify(accounts.accounts[0]),
-      );
+      gLogger.info("Trader.processWonState", "Trading complete");
     }
   }
 
@@ -571,33 +526,6 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     const accounts = await this.api.getAccounts();
     return accounts.accounts[0];
   }
-
-  // public async check0(): Promise<void> {
-  //   gLogger.trace(
-  //     "Trader.check",
-  //     this.globalStatus.status,
-  //     this._pause ? "paused" : "running",
-  //   );
-
-  //   if (!this._pause) {
-  //     if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
-  //       await this.processIdleState();
-  //     }
-  //     if (this._globalStatus.status != StatusType.Idle) {
-  //       await this.updatePositions();
-  //     }
-  //     if (this._globalStatus.status == StatusType.Dealing) {
-  //       this.processDealingState();
-  //     }
-  //     if (this._globalStatus.status == StatusType.Position) {
-  //       await this.processPositionState();
-  //     }
-  //     if (this._globalStatus.status == StatusType.Won) {
-  //       await this.processWonState();
-  //     }
-  //     gLogger.trace("Trader.check", this.globalStatus);
-  //   }
-  // }
 
   private async processOneLeg(leg: LegType): Promise<void> {
     const legData: LegDealStatus | undefined = this.globalStatus[leg];
@@ -608,8 +536,9 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       legData.position &&
       legData.position.size > 0
     ) {
+      const lossRatio = legData.contract.bid! / legData.ath!;
       const winRatio = legData.contract.bid! / legData.dealConfirmation.level;
-      if (winRatio < this._loosingLevel && !legData.loosingPartSold) {
+      if (!legData.loosingPartSold && lossRatio < 1 - this._stopLevel) {
         return this.closeLeg(leg, this._loosingExitSize).then(
           (_dealConfirmation) => {
             legData.loosingPartSold = true;
@@ -633,7 +562,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private async processBothLegs(): Promise<void> {
-    if (this.allLoosing()) {
+    if (/* this.allLoosing() */ false) {
       gLogger.info(
         "Trader.processBothLegs",
         "All legs are loosing, exiting positions.",
