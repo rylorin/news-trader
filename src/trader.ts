@@ -39,14 +39,14 @@ export type LegType = (typeof LegTypeEnum)[keyof typeof LegTypeEnum];
 export const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
 type LegDealStatus = {
+  ath?: number;
+  loosingPartSold: boolean;
+  x2PartSold: boolean;
+  x3PartSold: boolean;
   contract: Market;
   dealReference: string;
   dealConfirmation: DealConfirmation;
   position?: Position;
-  loosingPartSold: boolean;
-  x2PartSold: boolean;
-  x3PartSold: boolean;
-  ath?: number;
 };
 
 type DealingStatus = {
@@ -123,15 +123,18 @@ export class Trader {
   }
 
   public toString(): string {
-    return `Event: ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"} (in ${this._nextEvent ? Math.round((this._nextEvent - Date.now()) / 60_000) : "undefined"} min(s))
-Market: ${this._market}
-Underlying: ${this._underlying}
-Currency: ${this._currency}
-Delta: ${this._delta}
-Budget: ${this._budget}
+    return `/event ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
+/market ${this._market}
+/underlying ${this._underlying}
+/currency ${this._currency}
+/delta ${this._delta}
+/budget ${this._budget}
+/pause ${this._pause}
+/sampling ${this._sampling}
+/stoplevel ${this._stopLevel}
 ---
-Now: ${new Date().toISOString()}
-Pause: ${this._pause}
+Next event in ${this._nextEvent ? Math.round((this._nextEvent - Date.now()) / 60_000) : "undefined"} min(s)
+Now ${new Date().toISOString()}
 Status: ${this._globalStatus.status}`;
   }
 
@@ -143,11 +146,11 @@ Trade entry:
 We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency} during the last ${this._delay} minute(s) before the event.
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
-Early (loosing) exit conditions:
-We will sell ${this._loosingExitSize * 100}% (based on open size) of any leg trading ${this._stopLevel * 100}% below its high of the trading session.
+Losing exit conditions:
+We will sell ${this._loosingExitSize * 100}% (based on current/remaining size) of any leg which price falls below ${this._stopLevel * 100}% of the entry price below the highest price reached during the current trading session.
 
 Winning exits conditions:
-We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simustaneously close the opposite leg.
+We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simultaneously close the opposite leg.
 We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any leg reaching ${this._x3WinningLevel * 100}% of its entry price.
 
 Notes:
@@ -393,13 +396,14 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
                     .tradeConfirm(dealReference)
                     .then((dealConfirmation) => {
                       this.globalStatus[leg] = {
+                        ath: undefined,
+                        loosingPartSold: false,
+                        x2PartSold: false,
+                        x3PartSold: false,
                         contract: twoLegsContracts[leg]!,
                         dealReference,
                         dealConfirmation,
                         position: undefined,
-                        loosingPartSold: false,
-                        x2PartSold: false,
-                        x3PartSold: false,
                       };
                       gLogger.info(
                         "Trader.processIdleState",
@@ -532,25 +536,40 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     if (
       legData &&
       legData.contract &&
-      legData.dealConfirmation &&
+      legData.contract.bid &&
       legData.position &&
       legData.position.size > 0
     ) {
-      const lossRatio = legData.contract.bid! / legData.ath!;
-      const winRatio = legData.contract.bid! / legData.dealConfirmation.level;
-      if (!legData.loosingPartSold && lossRatio < 1 - this._stopLevel) {
-        return this.closeLeg(leg, this._loosingExitSize).then(
+      const winRatio = legData.contract.bid / legData.position.level;
+      if (
+        !legData.loosingPartSold &&
+        legData.contract.bid <=
+          legData.ath! - legData.position.level * this._stopLevel
+      ) {
+        gLogger.info(
+          "Trader.processOneLeg",
+          `Stop selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+        );
+        return this.closeLeg(leg, this._loosingExitSize, true).then(
           (_dealConfirmation) => {
             legData.loosingPartSold = true;
           },
         );
       } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
+        gLogger.info(
+          "Trader.processOneLeg",
+          `Selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
+        );
         return this.closeLeg(leg, this._x3ExitSize).then(
           (_dealConfirmation) => {
             legData.x3PartSold = true;
           },
         );
       } else if (winRatio > this._x2WinningLevel && !legData.x2PartSold) {
+        gLogger.info(
+          "Trader.processOneLeg",
+          `Selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
+        );
         return this.closeLeg(leg, this._x2ExitSize).then(
           (_dealConfirmation) => {
             legData.x2PartSold = true;
@@ -562,6 +581,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private async processBothLegs(): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
     if (/* this.allLoosing() */ false) {
       gLogger.info(
         "Trader.processBothLegs",

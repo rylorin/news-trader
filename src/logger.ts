@@ -32,15 +32,18 @@ export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 //
 class CustomTransport extends Transport {
   private readonly telegram: Telegram | undefined;
-  private readonly chatId: number | undefined;
+  private readonly chatId: number[] | undefined;
 
   constructor(config: IConfig, opts?: Record<string, any>) {
     super(opts);
 
     if (config.get("telegram.apiKey"))
       this.telegram = new Telegram(config.get("telegram.apiKey"));
-    if (config.has("telegram.console"))
-      this.chatId = config.get("telegram.console");
+    const chatId = config.get("telegram.console");
+    if (typeof chatId == "string") this.chatId = [parseInt(chatId)];
+    else if (typeof chatId == "number") this.chatId = [chatId];
+    else if (Array.isArray(chatId)) this.chatId = chatId;
+    else this.chatId = undefined;
   }
 
   log(info: any, callback: () => void): void {
@@ -51,8 +54,14 @@ class CustomTransport extends Transport {
         console.debug("Text too long for Telegram", text);
         text = text.substring(0, 4093) + "...";
       }
-      this.telegram
-        .sendMessage(this.chatId, text)
+      this.chatId
+        .reduce(
+          (p, chatId) =>
+            p.then(() =>
+              this.telegram!.sendMessage(chatId, text).then(() => undefined),
+            ),
+          Promise.resolve(),
+        )
         .then(() => callback())
         .catch((error: Error) => console.error(error));
     } else {

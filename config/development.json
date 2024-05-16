@@ -1,8 +1,151 @@
 {
+  "telegram": {
+    "console": [675075831]
+  },
   "trader": {
-    "event": "+11",
+    "event": "+12",
     "state": {
-      "status": "Idle"
+      "status": "Position",
+      "Put": {
+        "contract": {
+          "instrumentName": "Daily US Tech 100 18570.0 PUT",
+          "expiry": "16-MAY-24",
+          "epic": "DO.D.OTCDNAS.94.IP",
+          "instrumentType": "UNKNOWN",
+          "lotSize": 1,
+          "high": 40.9,
+          "low": 0.5,
+          "percentageChange": -0.04,
+          "netChange": 18591.3,
+          "bid": 8.9,
+          "offer": 13.8,
+          "updateTime": "19:31:26",
+          "updateTimeUTC": "18:31:26",
+          "delayTime": 0,
+          "streamingPricesAvailable": true,
+          "marketStatus": "TRADEABLE",
+          "scalingFactor": 1
+        },
+        "dealReference": "23KALRZZYKSTYQ3",
+        "dealConfirmation": {
+          "date": "2024-05-16T12:29:06.183",
+          "status": "OPEN",
+          "reason": "SUCCESS",
+          "dealStatus": "ACCEPTED",
+          "epic": "DO.D.OTCDNAS.94.IP",
+          "expiry": "16-MAY-24",
+          "dealReference": "23KALRZZYKSTYQ3",
+          "dealId": "DIAAAAMWZCGAMAW",
+          "affectedDeals": [
+            {
+              "dealId": "DIAAAAMWZCGAMAW",
+              "status": "OPENED"
+            }
+          ],
+          "level": 27.4,
+          "size": 0.02,
+          "direction": "BUY",
+          "stopLevel": null,
+          "limitLevel": null,
+          "stopDistance": null,
+          "limitDistance": null,
+          "guaranteedStop": false,
+          "trailingStop": false,
+          "profit": null,
+          "profitCurrency": null
+        },
+        "position": {
+          "contractSize": 1,
+          "createdDate": "2024/05/16 14:29:06:000",
+          "createdDateUTC": "2024-05-16T12:29:06",
+          "dealId": "DIAAAAMWZCGAMAW",
+          "dealReference": "23KALRZZYKSTYQ3",
+          "size": 0.01,
+          "direction": "BUY",
+          "limitLevel": null,
+          "level": 27.4,
+          "currency": "USD",
+          "controlledRisk": true,
+          "stopLevel": null,
+          "trailingStep": null,
+          "trailingStopDistance": null,
+          "limitedRiskPremium": null
+        },
+        "loosingPartSold": true,
+        "x2PartSold": false,
+        "x3PartSold": false,
+        "ath": 34.8
+      },
+      "Call": {
+        "contract": {
+          "instrumentName": "Daily US Tech 100 18670.0 CALL",
+          "expiry": "16-MAY-24",
+          "epic": "DO.D.OTCDNAS.53.IP",
+          "instrumentType": "UNKNOWN",
+          "lotSize": 1,
+          "high": 35.6,
+          "low": 0,
+          "percentageChange": -0.04,
+          "netChange": 18591.3,
+          "bid": 0,
+          "offer": 4.2,
+          "updateTime": "19:30:02",
+          "updateTimeUTC": "18:30:02",
+          "delayTime": 0,
+          "streamingPricesAvailable": true,
+          "marketStatus": "TRADEABLE",
+          "scalingFactor": 1
+        },
+        "dealReference": "RN4XUXKLDMNTYQ3",
+        "dealConfirmation": {
+          "date": "2024-05-16T12:29:06.358",
+          "status": "OPEN",
+          "reason": "SUCCESS",
+          "dealStatus": "ACCEPTED",
+          "epic": "DO.D.OTCDNAS.53.IP",
+          "expiry": "16-MAY-24",
+          "dealReference": "RN4XUXKLDMNTYQ3",
+          "dealId": "DIAAAAMWZB8GPA2",
+          "affectedDeals": [
+            {
+              "dealId": "DIAAAAMWZB8GPA2",
+              "status": "OPENED"
+            }
+          ],
+          "level": 26.2,
+          "size": 0.02,
+          "direction": "BUY",
+          "stopLevel": null,
+          "limitLevel": null,
+          "stopDistance": null,
+          "limitDistance": null,
+          "guaranteedStop": false,
+          "trailingStop": false,
+          "profit": null,
+          "profitCurrency": null
+        },
+        "position": {
+          "contractSize": 1,
+          "createdDate": "2024/05/16 14:29:06:000",
+          "createdDateUTC": "2024-05-16T12:29:06",
+          "dealId": "DIAAAAMWZB8GPA2",
+          "dealReference": "RN4XUXKLDMNTYQ3",
+          "size": 0.01,
+          "direction": "BUY",
+          "limitLevel": null,
+          "level": 26.2,
+          "currency": "USD",
+          "controlledRisk": true,
+          "stopLevel": null,
+          "trailingStep": null,
+          "trailingStopDistance": null,
+          "limitedRiskPremium": null
+        },
+        "loosingPartSold": true,
+        "x2PartSold": false,
+        "x3PartSold": false,
+        "ath": 26.6
+      }
     }
   }
 }
