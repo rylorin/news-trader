@@ -35,17 +35,44 @@ export class MyTradingBotApp {
       this.telegram.start(async (ctx) =>
         ctx.reply(`Welcome ${ctx.message.from.username}!`),
       );
-      this.telegram.help(async (ctx) => ctx.reply("Send me a sticker"));
-      this.telegram.on(message("sticker"), async (ctx) => ctx.reply("👍"));
+      this.telegram.help(
+        Telegraf.reply(`Available commands:
+help - show this help text
+whoami - show current discussion info
+pause - pause or resume bot operation
+status - show bot status
+state - dump/load bot state
+exit - exit (stop) bot
+market - get/set market to trade
+underlying - get/set underlying name
+currency - get/set trading currency
+price - get underlying price/level
+event - get/set macro economic event to trade
+delta - get/set legs strikes delta to underlying level
+delay - get/set delay at which trading will occurs related to event
+sampling - get/set frequency in secs used to check trading conditions
+stoplevel - get/set trailing stop loss in percents of budget
+positions - display bot managed positions
+close - close bot managed positions
+account - display account balance
+explain - explain strategy
+`),
+      );
       // Bot commands
-      this.telegram.command("exit", async (ctx) => this.handleExitCommand(ctx));
       this.telegram.command("whoami", async (ctx) =>
         ctx.reply(formatObject(ctx.update)),
       );
-      // Trader settings commands
       this.telegram.command("pause", async (ctx) =>
         this.handlePauseCommand(ctx),
       );
+      this.telegram.command("status", async (ctx) =>
+        this.handleStatusCommand(ctx),
+      );
+      this.telegram.command("state", async (ctx) =>
+        this.handleStateCommand(ctx),
+      );
+      this.telegram.command("exit", async (ctx) => this.handleExitCommand(ctx));
+      // Trader settings commands
       this.telegram.command("market", async (ctx) =>
         this.handleMarketCommand(ctx),
       );
@@ -76,12 +103,6 @@ export class MyTradingBotApp {
       this.telegram.command("budget", async (ctx) =>
         this.handleBudgetCommand(ctx),
       );
-      this.telegram.command("status", async (ctx) =>
-        this.handleStatusCommand(ctx),
-      );
-      this.telegram.command("state", async (ctx) =>
-        this.handleStateCommand(ctx),
-      );
       this.telegram.command("positions", async (ctx) =>
         this.handlePositionsCommand(ctx),
       );
@@ -95,6 +116,7 @@ export class MyTradingBotApp {
         this.handleExplainCommand(ctx),
       );
       // Catch-alls
+      this.telegram.on(message("sticker"), Telegraf.reply("👍"));
       this.telegram.hears(/\/(.+)/, async (ctx) => {
         const cmd = ctx.match[1];
         return ctx.reply(

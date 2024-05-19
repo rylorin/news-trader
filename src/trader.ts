@@ -40,7 +40,7 @@ export const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
 type LegDealStatus = {
   ath?: number;
-  loosingPartSold: boolean;
+  losingPartSold: boolean;
   x2PartSold: boolean;
   x3PartSold: boolean;
   contract: Market;
@@ -70,7 +70,7 @@ export class Trader {
   private _globalStatus: DealingStatus;
   private _nextEvent: number | undefined;
   private _stopLevel: number;
-  private _loosingExitSize: number;
+  private _losingExitSize: number;
   private _delay: number;
   private readonly _x2WinningLevel: number;
   private readonly _x2ExitSize: number;
@@ -100,7 +100,7 @@ export class Trader {
     this._delay = this.config.get("trader.delay"); // min(s)
     this._stopLevel = this.config.get("trader.stopLevel");
     this._sampling = this.config.get("trader.sampling"); // secs
-    this._loosingExitSize = 0.5;
+    this._losingExitSize = 0.5;
     this._x2WinningLevel = 2;
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
@@ -147,7 +147,7 @@ We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
 Losing exit conditions:
-We will sell ${this._loosingExitSize * 100}% (based on current/remaining size) of any leg which price falls below ${this._stopLevel * 100}% of the entry price below the highest price reached during the current trading session.
+We will sell ${this._losingExitSize * 100}% (based on current/remaining size) of any leg which price falls below ${this._stopLevel * 100}% of the entry price below the highest price reached during the current trading session.
 
 Winning exits conditions:
 We will sell ${Math.round(this._x2ExitSize * 100)}% (based on open size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simultaneously close the opposite leg.
@@ -155,7 +155,7 @@ We will sell ${Math.round(this._x3ExitSize * 100)}% (based on open size) of any 
 
 Notes:
 Any unsold part of a position may be lost at the end of the trading day.
-Under normal market conditions, we should not lose more than ${this._budget - this._budget * (1 - this._stopLevel) * this._loosingExitSize} ${this._currency}.
+Under normal market conditions, we should not lose more than ${this._budget - this._budget * (1 - this._stopLevel) * this._losingExitSize} ${this._currency}.
 Conditions will be checked approximately every ${this._sampling} second${this._sampling > 1 ? "s" : ""}; therefore, any condition that is met for less than this delay may be ignored.
 🤞`;
   }
@@ -397,7 +397,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
                     .then((dealConfirmation) => {
                       this.globalStatus[leg] = {
                         ath: undefined,
-                        loosingPartSold: false,
+                        losingPartSold: false,
                         x2PartSold: false,
                         x3PartSold: false,
                         contract: twoLegsContracts[leg]!,
@@ -542,23 +542,23 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     ) {
       const winRatio = legData.contract.bid / legData.position.level;
       if (
-        !legData.loosingPartSold &&
+        !legData.losingPartSold &&
         legData.contract.bid <=
           legData.ath! - legData.position.level * this._stopLevel
       ) {
         gLogger.info(
           "Trader.processOneLeg",
-          `Stop selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+          `Stop selling ${this._losingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
-        return this.closeLeg(leg, this._loosingExitSize, true).then(
+        return this.closeLeg(leg, this._losingExitSize, true).then(
           (_dealConfirmation) => {
-            legData.loosingPartSold = true;
+            legData.losingPartSold = true;
           },
         );
       } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
         gLogger.info(
           "Trader.processOneLeg",
-          `Selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
+          `Selling ${this._losingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
         );
         return this.closeLeg(leg, this._x3ExitSize).then(
           (_dealConfirmation) => {
@@ -568,7 +568,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       } else if (winRatio > this._x2WinningLevel && !legData.x2PartSold) {
         gLogger.info(
           "Trader.processOneLeg",
-          `Selling ${this._loosingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
+          `Selling ${this._losingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
         );
         return this.closeLeg(leg, this._x2ExitSize).then(
           (_dealConfirmation) => {
@@ -585,7 +585,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     if (/* this.allLoosing() */ false) {
       gLogger.info(
         "Trader.processBothLegs",
-        "All legs are loosing, exiting positions.",
+        "All legs are losing, exiting positions.",
       );
       // Exit all positions
       return legtypes.reduce(

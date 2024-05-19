@@ -56,8 +56,8 @@ class CustomTransport extends Transport {
       }
       this.chatId
         .reduce(
-          (p, chatId) =>
-            p.then(() =>
+          async (p, chatId) =>
+            p.then(async () =>
               this.telegram!.sendMessage(chatId, text).then(() => undefined),
             ),
           Promise.resolve(),
