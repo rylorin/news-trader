@@ -38,12 +38,14 @@ export type LegType = (typeof LegTypeEnum)[keyof typeof LegTypeEnum];
 
 export const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
+type MarketX = Market & { strike: number };
+
 type LegDealStatus = {
   ath?: number;
   losingPartSold: boolean;
   x2PartSold: boolean;
   x3PartSold: boolean;
-  contract: Market;
+  contract: MarketX;
   dealReference: string;
   dealConfirmation: DealConfirmation;
   position?: Position;
@@ -130,6 +132,7 @@ export class Trader {
 /delta ${this._delta}
 /budget ${this._budget}
 /pause ${this._pause}
+/delay ${this._delay}
 /sampling ${this._sampling}
 /stoplevel ${this._stopLevel}
 ---
@@ -256,7 +259,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     }, 10_000);
   }
 
-  private async getDailyOptionsOf(market: string): Promise<Market[]> {
+  private async getDailyOptionsOf(market: string): Promise<MarketX[]> {
     gLogger.debug("Trader.getDailyOptionsOf", market);
 
     let markets = await this.api.getMarketNavigation();
@@ -274,7 +277,12 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     // console.log("todayOptionsId", todayOptionsId);
     const result = (await this.api.getMarketNavigation(todayOptionsId?.id))
       .markets!;
-    return result?.filter((item) => item.marketStatus == "TRADEABLE");
+    return result
+      ?.filter((item) => item.marketStatus == "TRADEABLE")
+      .map((item) => ({
+        ...item,
+        strike: this.getStrike(item.instrumentName),
+      }));
   }
 
   public async getUnderlyingPrice(): Promise<number> {
@@ -288,35 +296,41 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return Math.round((sum * 100) / count / 2) / 100;
   }
 
+  private getStrike(name: string): number {
+    return parseFloat(name.split(" ").at(-2)!);
+  }
+
   private findEntryContract(
-    options: Market[],
+    options: MarketX[],
     price: number,
   ): {
-    [LegTypeEnum.Put]: Market | undefined;
-    [LegTypeEnum.Call]: Market | undefined;
+    [LegTypeEnum.Put]: MarketX | undefined;
+    [LegTypeEnum.Call]: MarketX | undefined;
   } {
-    // const result :{ [LegType.Put]: Market|undefined; [LegType.Call]: Market|undefined } ={ [LegType.Put]: undefined, [LegType.Call]: undefined }
     return legtypes.reduce(
       (p, leg) => {
         p[leg] = options
           .filter((item) => item.instrumentName.endsWith(leg.toUpperCase()))
+          .filter((item) =>
+            leg == LegTypeEnum.Put ? item.strike < price : item.strike > price,
+          )
           .sort((a, b) => {
-            const aStrike = Math.abs(
-              parseFloat(a.instrumentName.split(" ").at(-2)!) -
+            const aDelta = Math.abs(
+              a.strike -
                 (price + (leg == LegTypeEnum.Put ? -1 : 1) * this.delta),
             );
-            const bStrike = Math.abs(
-              parseFloat(b.instrumentName.split(" ").at(-2)!) -
+            const bDelta = Math.abs(
+              b.strike -
                 (price + (leg == LegTypeEnum.Put ? -1 : 1) * this.delta),
             );
-            return bStrike - aStrike;
+            return bDelta - aDelta;
           })
           .at(-1);
         return p;
       },
       { [LegTypeEnum.Put]: undefined, [LegTypeEnum.Call]: undefined } as {
-        [LegTypeEnum.Put]: Market | undefined;
-        [LegTypeEnum.Call]: Market | undefined;
+        [LegTypeEnum.Put]: MarketX | undefined;
+        [LegTypeEnum.Call]: MarketX | undefined;
       },
     );
   }
@@ -351,8 +365,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
 
   private async processIdleState(): Promise<void> {
     const now = Date.now();
-    const eventDelay = Math.floor((this.nextEvent! - now) / 60_000); // in mins
-    if (eventDelay < this._delay) {
+    if (now > this._nextEvent! - this._delay * 60_000) {
       gLogger.info("Trader.processIdleState", "Time for trading!");
       this.nextEvent = undefined;
 
@@ -420,7 +433,11 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           "No daily options or can't guess underlying price!",
         );
       }
-    } else this.displayCountDown(eventDelay);
+    } else {
+      this.displayCountDown(
+        Math.floor((this._nextEvent! - this._delay * 60_000 - now) / 60_000),
+      );
+    }
   }
 
   private processDealingState(): void {
@@ -444,7 +461,10 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           );
           legData.position = position?.position;
           if (position) {
-            legData.contract = position.market;
+            legData.contract = {
+              ...position.market,
+              strike: this.getStrike(position.market.instrumentName),
+            };
             if (!legData.ath) legData.ath = position.position.level;
             if (legData.contract.bid! > legData.ath)
               legData.ath = position.market.bid!;

@@ -23,6 +23,6 @@
     "budget": 1,
     "delay": 1,
     "sampling": 30,
-    "stopLevel": 0.4
+    "stopLevel": 0.5
   }
 }
