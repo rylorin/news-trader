@@ -9,7 +9,7 @@ import { IConfig } from "config";
 import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { deepCopy, parseEvent, string2boolean } from "./utils";
+import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
 
 export type PositionEntry = {
   instrumentName: string;
@@ -146,7 +146,7 @@ Status: ${this._globalStatus.status}`;
 We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
 Trade entry:
-We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency} during the last ${this._delay} minute(s) before the event.
+We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency} ${Math.abs(this._delay)}, minute(s) ${this._delay < 0 ? "before" : "after"} the event.
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
 Losing exit conditions:
@@ -365,7 +365,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
 
   private async processIdleState(): Promise<void> {
     const now = Date.now();
-    if (now > this._nextEvent! - this._delay * 60_000) {
+    if (now > this._nextEvent! + this._delay * 60_000) {
       gLogger.info("Trader.processIdleState", "Time for trading!");
       this.nextEvent = undefined;
 
@@ -435,7 +435,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       }
     } else {
       this.displayCountDown(
-        Math.floor((this._nextEvent! - this._delay * 60_000 - now) / 60_000),
+        Math.floor((this._nextEvent! + this._delay * 60_000 - now) / 60_000),
       );
     }
   }
@@ -575,24 +575,36 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
             legData.losingPartSold = true;
           },
         );
-      } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
-        gLogger.info(
-          "Trader.processOneLeg",
-          `Selling ${this._losingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
-        );
-        return this.closeLeg(leg, this._x3ExitSize).then(
-          (_dealConfirmation) => {
-            legData.x3PartSold = true;
-          },
-        );
       } else if (winRatio > this._x2WinningLevel && !legData.x2PartSold) {
         gLogger.info(
           "Trader.processOneLeg",
-          `Selling ${this._losingExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
+          `Selling ${this._x2ExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
         );
         return this.closeLeg(leg, this._x2ExitSize).then(
           (_dealConfirmation) => {
             legData.x2PartSold = true;
+            const oppositeLegData = this.globalStatus[oppositeLeg(leg)];
+            if (oppositeLegData) {
+              gLogger.info(
+                "Trader.processOneLeg",
+                `Stop selling 100% of ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+              );
+              return this.closeLeg(oppositeLeg(leg), 1, true).then(
+                (_dealConfirmation) => {
+                  oppositeLegData.losingPartSold = true;
+                },
+              );
+            }
+          },
+        );
+      } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
+        gLogger.info(
+          "Trader.processOneLeg",
+          `Selling ${this._x3ExitSize * 100}% of ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
+        );
+        return this.closeLeg(leg, this._x3ExitSize).then(
+          (_dealConfirmation) => {
+            legData.x3PartSold = true;
           },
         );
       }
