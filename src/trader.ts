@@ -595,7 +595,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           Math.round(legData.position.size * this._losingExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Stop selling ${exitSize}% ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+          `Sell (stop) ${exitSize}% ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLegAbs(leg, exitSize).then((_dealConfirmation) => {
           legData.losingPartSold = true;
@@ -605,7 +605,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           Math.round(legData.position.size * this._x2ExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Selling ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x2 level`,
+          `Sell (x2 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLegAbs(leg, exitSize).then(
           async (_dealConfirmation) => {
@@ -615,7 +615,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
               const exitSize = oppositeLegData.position.size;
               gLogger.info(
                 "Trader.processOneLeg",
-                `Losing selling ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+                `Sell (losing) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
               );
               return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
                 (_dealConfirmation) => {
@@ -630,7 +630,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           Math.round(legData.position.size * this._x3ExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Selling ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency} at x3 level`,
+          `Sell (x3 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLeg(leg, this._x3ExitSize).then(
           (_dealConfirmation) => {
