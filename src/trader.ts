@@ -63,24 +63,29 @@ type DealingStatus = {
 export class Trader {
   private readonly config: IConfig;
   private readonly api;
+
+  private started: boolean;
+  private timer: NodeJS.Timeout | undefined;
+  private _globalStatus: DealingStatus;
+
   private _pause: boolean;
   private _market: string;
   private _underlying: string;
   private _currency: string;
   private _delta: number;
-  private _budget: number;
-  private _globalStatus: DealingStatus;
-  private _nextEvent: number | undefined;
-  private _stopLevel: number;
-  private _losingExitSize: number;
   private _delay: number;
+  private _budget: number;
+  private _nextEvent: number | undefined;
+  private _sampling: number;
+
+  private _stopLevel: number;
+  private readonly _trailingStopLevel: number;
+  private _losingExitSize: number;
+  private readonly _oppositeExitSize: number;
   private readonly _x2WinningLevel: number;
   private readonly _x2ExitSize: number;
   private readonly _x3WinningLevel: number;
   private readonly _x3ExitSize: number;
-  private _sampling: number;
-  private timer: NodeJS.Timeout | undefined;
-  private started: boolean;
 
   constructor(config: IConfig) {
     this.config = config;
@@ -91,6 +96,7 @@ export class Trader {
       [LegTypeEnum.Put]: undefined,
       [LegTypeEnum.Call]: undefined,
     };
+    this.started = false;
 
     // Bot settings
     this._pause = string2boolean(this.config.get("trader.pause"));
@@ -98,16 +104,18 @@ export class Trader {
     this._underlying = this.config.get("trader.underlying");
     this._currency = this.config.get("trader.currency");
     this._delta = this.config.get("trader.delta");
-    this._budget = this.config.get("trader.budget");
     this._delay = this.config.get("trader.delay"); // min(s)
-    this._stopLevel = this.config.get("trader.stopLevel");
+    this._budget = this.config.get("trader.budget");
     this._sampling = this.config.get("trader.sampling"); // secs
+
+    this._stopLevel = this.config.get("trader.stopLevel");
+    this._trailingStopLevel = 0.75;
     this._losingExitSize = 0.5;
+    this._oppositeExitSize = 1;
     this._x2WinningLevel = 2;
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
-    this._x3ExitSize = 2 / 3;
-    this.started = false;
+    this._x3ExitSize = 0.67;
 
     // For debugging/replay purpose
     if (this.config.has("trader.event"))
@@ -142,19 +150,19 @@ Status: ${this._globalStatus.status}`;
   }
 
   public explain(): string {
-    return `News trader's strategy:
+    return `News Trader's Strategy:
 We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
-Trade entry:
+Trade Entry:
 We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency}, ${Math.abs(this._delay)} minute(s) ${this._delay < 0 ? "before" : "after"} the event.
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
-Losing exit conditions:
-We will sell ${this._losingExitSize * 100}% (based on current/remaining size) of any leg which price falls below ${this._stopLevel * 100}% of the entry price below the highest price reached during the current trading session.
+Exits Conditions:
+We will sell ${Math.round(this._x2ExitSize * 100)}% of any position reaching ${this._x2WinningLevel * 100}% of its entry price and simultaneously sell ${this._oppositeExitSize * 100}% of the opposite leg.
+We will sell ${Math.round(this._x3ExitSize * 100)}% of any position reaching ${this._x3WinningLevel * 100}% of its entry price and then sell ${this._losingExitSize * 100}% if price falls ${this._trailingStopLevel * 100}% of the entry price below the highest price reached during the current trading session.
 
-Winning exits conditions:
-We will sell ${Math.round(this._x2ExitSize * 100)}% (based on current size) of any leg reaching ${this._x2WinningLevel * 100}% of its entry price. We will simultaneously close the opposite leg.
-We will sell ${Math.round(this._x3ExitSize * 100)}% (based on current size) of any leg reaching ${this._x3WinningLevel * 100}% of its entry price.
+Losing Exit Conditions:
+We will sell ${this._losingExitSize * 100}% of any position which price falls below ${this._stopLevel * 100}% of the entry price.
 
 Notes:
 Any unsold part of a position may be lost at the end of the trading day.
@@ -588,49 +596,72 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       const winRatio = legData.contract.bid / legData.position.level;
       if (
         legData.contract.bid <=
-          legData.ath! - legData.position.level * this._stopLevel &&
+          legData.position.level * (1 - this._stopLevel) &&
         !legData.losingPartSold
       ) {
+        // Sell losing position
         const exitSize =
           Math.round(legData.position.size * this._losingExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Sell (stop) ${exitSize}% ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+          `Sell (${this._losingExitSize * 100}%/stop) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+        );
+        return this.closeLegAbs(leg, exitSize).then((_dealConfirmation) => {
+          legData.losingPartSold = true;
+        });
+      } else if (
+        legData.contract.bid <=
+          legData.ath! - legData.position.level * this._trailingStopLevel &&
+        !legData.losingPartSold &&
+        legData.x3PartSold
+      ) {
+        // trailing stop loss on winning position
+        const exitSize =
+          Math.round(legData.position.size * this._losingExitSize * 100) / 100;
+        gLogger.info(
+          "Trader.processOneLeg",
+          `Sell (${this._losingExitSize * 100}%/trailing stop) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLegAbs(leg, exitSize).then((_dealConfirmation) => {
           legData.losingPartSold = true;
         });
       } else if (winRatio > this._x2WinningLevel && !legData.x2PartSold) {
+        // x2 level hit, sell part of wining leg
         const exitSize =
           Math.round(legData.position.size * this._x2ExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Sell (x2 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+          `Sell (${this._x2ExitSize * 100}%/x2 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLegAbs(leg, exitSize).then(
           async (_dealConfirmation) => {
             legData.x2PartSold = true;
-            const oppositeLegData = this.globalStatus[oppositeLeg(leg)];
-            if (oppositeLegData && oppositeLegData.position) {
-              const exitSize = oppositeLegData.position.size;
-              gLogger.info(
-                "Trader.processOneLeg",
-                `Sell (losing) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
-              );
-              return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
-                (_dealConfirmation) => {
-                  oppositeLegData.losingPartSold = true;
-                },
-              );
+            if (this._oppositeExitSize > 0) {
+              // Sell opposite (losing) leg
+              const oppositeLegData = this.globalStatus[oppositeLeg(leg)];
+              if (oppositeLegData && oppositeLegData.position) {
+                const exitSize =
+                  oppositeLegData.position.size * this._oppositeExitSize;
+                gLogger.info(
+                  "Trader.processOneLeg",
+                  `Sell (${100}%/losing) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+                );
+                return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
+                  (_dealConfirmation) => {
+                    oppositeLegData.losingPartSold = true;
+                  },
+                );
+              }
             }
           },
         );
       } else if (winRatio > this._x3WinningLevel && !legData.x3PartSold) {
+        // x3 level hit, sell part of wining leg
         const exitSize =
           Math.round(legData.position.size * this._x3ExitSize * 100) / 100;
         gLogger.info(
           "Trader.processOneLeg",
-          `Sell (x3 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
+          `Sell (${this._x3ExitSize * 100}%/x3 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
         return this.closeLeg(leg, this._x3ExitSize).then(
           (_dealConfirmation) => {
