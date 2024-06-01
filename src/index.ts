@@ -51,7 +51,8 @@ event - get/set macro economic event to trade
 delta - get/set legs strikes delta to underlying level
 delay - get/set delay in mins at which trading will occurs related to event. <0 will trade before event, >0 will trade after event.
 sampling - get/set frequency in secs used to check trading conditions
-stoplevel - get/set trailing stop loss in percents of budget
+budget - get/set trading budget
+stoplevel - get/set trailing stop loss in percents from session highs
 positions - display bot managed positions
 close - close bot managed positions
 account - display account balance

@@ -109,9 +109,9 @@ export class Trader {
     this._sampling = this.config.get("trader.sampling"); // secs
 
     this._stopLevel = this.config.get("trader.stopLevel");
-    this._trailingStopLevel = 0.75;
+    this._trailingStopLevel = 0.25;
     this._losingExitSize = 0.5;
-    this._oppositeExitSize = 1;
+    this._oppositeExitSize = 0.5;
     this._x2WinningLevel = 2;
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
@@ -159,7 +159,7 @@ Each leg will be at a distance of ${this._delta} from the ${this._underlying} le
 
 Exits Conditions:
 We will sell ${Math.round(this._x2ExitSize * 100)}% of any position reaching ${this._x2WinningLevel * 100}% of its entry price and simultaneously sell ${this._oppositeExitSize * 100}% of the opposite leg.
-We will sell ${Math.round(this._x3ExitSize * 100)}% of any position reaching ${this._x3WinningLevel * 100}% of its entry price and then sell ${this._losingExitSize * 100}% if price falls ${this._trailingStopLevel * 100}% of the entry price below the highest price reached during the current trading session.
+We will sell ${Math.round(this._x3ExitSize * 100)}% of any position reaching ${this._x3WinningLevel * 100}% of its entry price; and then sell ${this._losingExitSize * 100}% if price falls ${this._trailingStopLevel * 100}% from its highest price.
 
 Losing Exit Conditions:
 We will sell ${this._losingExitSize * 100}% of any position which price falls below ${this._stopLevel * 100}% of the entry price.
@@ -517,7 +517,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   ): Promise<DealConfirmation> {
     const legData = this.globalStatus[leg];
     if (legData && legData.position && legData.position.size > 0) {
-      if (units > legData.position!.size) units = legData.position!.size;
+      if (units > legData.position.size) units = legData.position.size;
       else if (units < 0.01) units = 0.01;
       return this.api
         .closePosition(
@@ -610,8 +610,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           legData.losingPartSold = true;
         });
       } else if (
-        legData.contract.bid <=
-          legData.ath! - legData.position.level * this._trailingStopLevel &&
+        legData.contract.bid <= legData.ath! * (1 - this._trailingStopLevel) &&
         !legData.losingPartSold &&
         legData.x3PartSold
       ) {
@@ -639,12 +638,20 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
             if (this._oppositeExitSize > 0) {
               // Sell opposite (losing) leg
               const oppositeLegData = this.globalStatus[oppositeLeg(leg)];
-              if (oppositeLegData && oppositeLegData.position) {
+              if (
+                oppositeLegData &&
+                oppositeLegData.position &&
+                oppositeLegData.contract.bid
+              ) {
                 const exitSize =
-                  oppositeLegData.position.size * this._oppositeExitSize;
+                  Math.round(
+                    oppositeLegData.position.size *
+                      this._oppositeExitSize *
+                      100,
+                  ) / 100;
                 gLogger.info(
                   "Trader.processOneLeg",
-                  `Sell (${100}%/losing) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+                  `Sell (${this._oppositeExitSize * 100}%/losing) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
                 );
                 return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
                   (_dealConfirmation) => {

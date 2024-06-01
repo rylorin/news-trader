@@ -42,10 +42,10 @@ enum IgApiEndpoint {
   GetPositions,
 }
 
-interface IgApiEndpointDef {
+type IgApiEndpointDef = {
   method: "get" | "post" | "delete" | "put";
   url: string;
-}
+};
 
 const endpoints: Record<IgApiEndpoint, IgApiEndpointDef> = {
   [IgApiEndpoint.CreateSession]: {
@@ -355,38 +355,38 @@ export class APIClient {
 
   public async getMarketNavigation(nodeId?: string): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarketNavigation", nodeId);
-    return this.call(IgApiEndpoint.GetMarketNavigation, {
+    return this.call<MarketNavigation>(IgApiEndpoint.GetMarketNavigation, {
       nodeId,
-    }) as Promise<MarketNavigation>;
+    });
   }
 
   public async getMarket(epic?: string): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarket", epic);
-    return this.call(
+    return this.call<MarketNavigation>(
       IgApiEndpoint.GetMarket,
       {
         epic,
       },
       { Version: "3" },
-    ) as Promise<MarketNavigation>;
+    );
   }
 
   public async getMarkets(epics: string[]): Promise<MarketNavigation> {
     gLogger.trace("APIClient.getMarkets", epics);
-    return this.call(
+    return this.call<MarketNavigation>(
       IgApiEndpoint.GetMarkets,
       {
         epics: epics.join(","),
       },
       { Version: "2" },
-    ) as Promise<MarketNavigation>;
+    );
   }
 
   public async searchMarkets(searchTerm: string): Promise<MarketSearch> {
     gLogger.trace("APIClient.searchMarkets", searchTerm);
-    return this.call(IgApiEndpoint.SearchMarkets, {
+    return this.call<MarketSearch>(IgApiEndpoint.SearchMarkets, {
       searchTerm,
-    }) as Promise<MarketSearch>;
+    });
   }
 
   public async getHistoryPrices(
@@ -402,7 +402,7 @@ export class APIClient {
       startDate,
       endDate,
     );
-    return this.call(
+    return this.call<MarketSearch>(
       IgApiEndpoint.GetHitoryPrices,
       {
         epic,
@@ -411,12 +411,12 @@ export class APIClient {
         endDate: dateToString(endDate),
       },
       { Version: "2" },
-    ) as Promise<MarketSearch>;
+    );
   }
 
   public async getAccounts(): Promise<AccountsResponse> {
     gLogger.trace("APIClient.getAccounts");
-    return this.call(IgApiEndpoint.GetAccounts) as Promise<AccountsResponse>;
+    return this.call<AccountsResponse>(IgApiEndpoint.GetAccounts);
   }
 
   public async createPosition(
@@ -480,14 +480,14 @@ export class APIClient {
 
   public async tradeConfirm(dealReference: string): Promise<DealConfirmation> {
     gLogger.trace("APIClient.tradeConfirm", dealReference);
-    return this.call(IgApiEndpoint.TradeConfirm, {
+    return this.call<DealConfirmation>(IgApiEndpoint.TradeConfirm, {
       dealReference,
-    }) as Promise<DealConfirmation>;
+    });
   }
 
   public async getPosition(dealId?: string): Promise<Position> {
     gLogger.trace("APIClient.getPosition", dealId);
-    return this.call(
+    return this.call<Position>(
       IgApiEndpoint.GetPosition,
       {
         dealId,
@@ -495,17 +495,17 @@ export class APIClient {
       {
         Version: "2",
       },
-    ) as Promise<Position>;
+    );
   }
 
   public async getPositions(): Promise<PositionListResponse> {
     gLogger.trace("APIClient.getPositions");
-    return this.call(
+    return this.call<PositionListResponse>(
       IgApiEndpoint.GetPositions,
       {},
       {
         Version: "2",
       },
-    ) as Promise<PositionListResponse>;
+    );
   }
 }
