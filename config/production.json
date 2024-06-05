@@ -7,7 +7,7 @@
     "console": false
   },
   "trader": {
-    "budget": 20,
+    "budget": 4,
     "sampling": 5
   }
 }

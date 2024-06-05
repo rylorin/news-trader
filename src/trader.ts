@@ -9,7 +9,13 @@ import { IConfig } from "config";
 import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
+import {
+  deepCopy,
+  formatObject,
+  oppositeLeg,
+  parseEvent,
+  string2boolean,
+} from "./utils";
 
 export type PositionEntry = {
   instrumentName: string;
@@ -69,6 +75,7 @@ export class Trader {
   private _globalStatus: DealingStatus;
 
   private _pause: boolean;
+  private _name: string;
   private _market: string;
   private _underlying: string;
   private _currency: string;
@@ -100,6 +107,7 @@ export class Trader {
 
     // Bot settings
     this._pause = string2boolean(this.config.get("trader.pause"));
+    this._name = "major";
     this._market = this.config.get("trader.market");
     this._underlying = this.config.get("trader.underlying");
     this._currency = this.config.get("trader.currency");
@@ -109,7 +117,7 @@ export class Trader {
     this._sampling = this.config.get("trader.sampling"); // secs
 
     this._stopLevel = this.config.get("trader.stopLevel");
-    this._trailingStopLevel = 0.25;
+    this._trailingStopLevel = 0.15;
     this._losingExitSize = 0.5;
     this._oppositeExitSize = 0.5;
     this._x2WinningLevel = 2;
@@ -133,7 +141,8 @@ export class Trader {
   }
 
   public toString(): string {
-    return `/event ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
+    return `/name ${this._name}
+/event ${this._nextEvent ? new Date(this._nextEvent).toISOString() : "undefined"}
 /market ${this._market}
 /underlying ${this._underlying}
 /currency ${this._currency}
@@ -143,6 +152,7 @@ export class Trader {
 /delay ${this._delay}
 /sampling ${this._sampling}
 /stoplevel ${this._stopLevel}
+/trailingstoplevel ${this._trailingStopLevel}
 ---
 Next event in ${this._nextEvent ? Math.round((this._nextEvent - Date.now()) / 60_000) : "undefined"} min(s)
 Now ${new Date().toISOString()}
@@ -150,8 +160,8 @@ Status: ${this._globalStatus.status}`;
   }
 
   public explain(): string {
-    return `News Trader's Strategy:
-We will trade the next major economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
+    return `Current strategy:
+We will trade the next ${this._name} economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
 Trade Entry:
 We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency}, ${Math.abs(this._delay)} minute(s) ${this._delay < 0 ? "before" : "after"} the event.
@@ -176,6 +186,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
   public set pause(value: boolean) {
     this._pause = value;
+  }
+
+  public get name(): string {
+    return this._name;
+  }
+  public set name(value: string) {
+    this._name = value;
   }
 
   public get market(): string {
@@ -253,7 +270,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   public async start(): Promise<void> {
-    const session = await this.api.rest.login.createSession(
+    const session = await this.api.createSession(
       this.config.get("ig-api.username"),
       this.config.get("ig-api.password"),
     );
@@ -568,7 +585,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     if (!totalPositions) {
       gLogger.info(
         "Trader.processWonState",
-        `/state ${JSON.stringify(this._globalStatus)}`,
+        `/state ${formatObject(this._globalStatus)}`,
       );
       this._globalStatus = {
         status: StatusType.Idle,
@@ -670,11 +687,9 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           "Trader.processOneLeg",
           `Sell (${this._x3ExitSize * 100}%/x3 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
-        return this.closeLeg(leg, this._x3ExitSize).then(
-          (_dealConfirmation) => {
-            legData.x3PartSold = true;
-          },
-        );
+        return this.closeLegAbs(leg, exitSize).then((_dealConfirmation) => {
+          legData.x3PartSold = true;
+        });
       }
     }
     return Promise.resolve();
@@ -745,7 +760,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     this.started = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    return this.api.rest.login.logout();
+    return this.api.disconnect();
   }
 
   public async getPositions(): Promise<

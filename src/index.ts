@@ -43,6 +43,7 @@ pause - pause or resume bot operation
 status - show bot status
 state - dump/load bot state
 exit - exit (stop) bot
+name - get/set strategy name
 market - get/set market to trade
 underlying - get/set underlying name
 currency - get/set trading currency
@@ -74,6 +75,7 @@ explain - explain strategy
       );
       this.telegram.command("exit", async (ctx) => this.handleExitCommand(ctx));
       // Trader settings commands
+      this.telegram.command("name", async (ctx) => this.handleNameCommand(ctx));
       this.telegram.command("market", async (ctx) =>
         this.handleMarketCommand(ctx),
       );
@@ -130,6 +132,25 @@ explain - explain strategy
         ),
       );
     }
+  }
+
+  private async handleNameCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug("MyTradingBotApp.handleNameCommand", "Handle 'name' command");
+    if (ctx.payload) {
+      this.trader.name = ctx.payload.trim();
+    }
+    await ctx
+      .reply(`/name ${this.trader.name}`)
+      .catch((err: Error) =>
+        gLogger.error("MyTradingBotApp.handleNameCommand", err.message),
+      );
   }
 
   private async handleMarketCommand(
