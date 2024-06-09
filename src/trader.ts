@@ -727,6 +727,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     if (!this._pause && this.started) {
       try {
         this.checkGuard = true;
+        // await this.api.getAccounts(); // Test API status
         if (this._nextEvent && this._globalStatus.status == StatusType.Idle) {
           await this.processIdleState(); // Open positions when conditions are met
         }
