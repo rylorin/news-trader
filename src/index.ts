@@ -101,7 +101,7 @@ explain - explain strategy
         this.handleSamplingCommand(ctx),
       );
       this.telegram.command("stoplevel", async (ctx) =>
-        this.handleLoseLevelCommand(ctx),
+        this.handleStopLevelCommand(ctx),
       );
       this.telegram.command("budget", async (ctx) =>
         this.handleBudgetCommand(ctx),
@@ -326,7 +326,7 @@ explain - explain strategy
       );
   }
 
-  private async handleLoseLevelCommand(
+  private async handleStopLevelCommand(
     ctx: Context<{
       message: Update.New & Update.NonChannel & Message.TextMessage;
       update_id: number;
@@ -335,7 +335,7 @@ explain - explain strategy
       CommandContextExtn,
   ): Promise<void> {
     gLogger.debug(
-      "MyTradingBotApp.handleLoseLevelCommand",
+      "MyTradingBotApp.handleStopLevelCommand",
       "Handle 'stoplevel' command",
     );
     if (ctx.payload) {
@@ -345,7 +345,7 @@ explain - explain strategy
     await ctx
       .reply(`/stoplevel ${this.trader.stoplevel}`)
       .catch((err: Error) =>
-        gLogger.error("MyTradingBotApp.handleLoseLevelCommand", err.message),
+        gLogger.error("MyTradingBotApp.handleStopLevelCommand", err.message),
       );
   }
 
@@ -581,7 +581,7 @@ explain - explain strategy
       }
       // console.log(ctx);
       await ctx
-        .reply(formatObject(this.trader.globalStatus))
+        .reply(`/state ${formatObject(this.trader.globalStatus)}`)
         .catch((err: Error) =>
           gLogger.error("MyTradingBotApp.handleStateCommand", err.message),
         );

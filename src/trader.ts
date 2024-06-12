@@ -9,13 +9,7 @@ import { IConfig } from "config";
 import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
-import {
-  deepCopy,
-  formatObject,
-  oppositeLeg,
-  parseEvent,
-  string2boolean,
-} from "./utils";
+import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
 
 export type PositionEntry = {
   instrumentName: string;
@@ -53,7 +47,7 @@ type LegDealStatus = {
   x3PartSold: boolean;
   contract: MarketX;
   dealReference: string;
-  dealConfirmation: DealConfirmation;
+  dealConfirmation?: DealConfirmation;
   position?: Position;
 };
 
@@ -430,28 +424,21 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
                   twoLegsContracts[leg]!.expiry,
                 )
                 .then(async (dealReference) => {
-                  return this.api
-                    .tradeConfirm(dealReference)
-                    .then((dealConfirmation) => {
-                      this.globalStatus[leg] = {
-                        ath: undefined,
-                        losingPartSold: false,
-                        x2PartSold: false,
-                        x3PartSold: false,
-                        contract: twoLegsContracts[leg]!,
-                        dealReference,
-                        dealConfirmation,
-                        position: undefined,
-                      };
-                      gLogger.info(
-                        "Trader.processIdleState",
-                        `${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
-                      );
-                    });
+                  this.globalStatus[leg] = {
+                    ath: undefined,
+                    losingPartSold: false,
+                    x2PartSold: false,
+                    x3PartSold: false,
+                    contract: twoLegsContracts[leg]!,
+                    dealReference,
+                    dealConfirmation: undefined,
+                    position: undefined,
+                  };
                 });
             }),
           Promise.resolve(),
         );
+        this.globalStatus.status = StatusType.Dealing;
       } else {
         gLogger.error(
           "Trader.processIdleState",
@@ -465,8 +452,26 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     }
   }
 
-  private processDealingState(): void {
+  private async processDealingState(): Promise<void> {
     // Update deal confirmation
+    await legtypes.reduce(
+      (p, leg) =>
+        p.then(() => {
+          const legData: LegDealStatus | undefined = this.globalStatus[leg];
+          if (legData && !legData.dealConfirmation) {
+            return this.api
+              .tradeConfirm(legData.dealReference)
+              .then((dealConfirmation) => {
+                legData.dealConfirmation = dealConfirmation;
+                gLogger.info(
+                  "Trader.processIdleState",
+                  `${dealConfirmation.direction} ${dealConfirmation.size} ${dealConfirmation.epic} ${dealConfirmation.dealStatus}`,
+                );
+              });
+          }
+        }),
+      Promise.resolve(),
+    );
     const positionsComplete = legtypes.reduce(
       (p, leg) => (this._globalStatus[leg]?.position ? p : false),
       true,
@@ -480,9 +485,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
         const legData: LegDealStatus | undefined = this.globalStatus[leg];
         if (legData) {
           const position = response.positions.find(
-            (item) =>
-              item.position.dealReference ==
-              legData.dealConfirmation!.dealReference,
+            (item) => item.position.dealReference == legData.dealReference,
           );
           legData.position = position?.position;
           if (position) {
@@ -583,10 +586,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       0,
     );
     if (!totalPositions) {
-      gLogger.info(
-        "Trader.processWonState",
-        `/state ${formatObject(this._globalStatus)}`,
-      );
+      gLogger.info("Trader.processWonState", `/state ${this._globalStatus}`);
       this._globalStatus = {
         status: StatusType.Idle,
         [LegTypeEnum.Put]: undefined,
