@@ -158,7 +158,7 @@ Status: ${this._globalStatus.status}`;
 We will trade the next ${this._name} economic macro event at ${this._nextEvent ? new Date(this._nextEvent).toUTCString() : "undefined"} (now: ${new Date().toUTCString()}).
 
 Trade Entry:
-We will simultaneously buy ${LegTypeEnum.Put} and ${LegTypeEnum.Call} legs on ${this._market} for an overall budget of ${this._budget} ${this._currency}, ${Math.abs(this._delay)} minute(s) ${this._delay < 0 ? "before" : "after"} the event.
+We buy a strangle on ${this._market} for an overall budget of ${this._budget} ${this._currency}, ${Math.abs(this._delay)} minute(s) ${this._delay < 0 ? "before" : "after"} the event.
 Each leg will be at a distance of ${this._delta} from the ${this._underlying} level, selecting the closest strike.
 
 Exits Conditions:
@@ -423,7 +423,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
                   twoLegsContracts[leg]!.offer! * 2, // To make sure to be executed even in case of price change
                   twoLegsContracts[leg]!.expiry,
                 )
-                .then(async (dealReference) => {
+                .then((dealReference) => {
                   this.globalStatus[leg] = {
                     ath: undefined,
                     losingPartSold: false,
@@ -455,8 +455,8 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   private async processDealingState(): Promise<void> {
     // Update deal confirmation
     await legtypes.reduce(
-      (p, leg) =>
-        p.then(() => {
+      async (p, leg) =>
+        p.then(async () => {
           const legData: LegDealStatus | undefined = this.globalStatus[leg];
           if (legData && !legData.dealConfirmation) {
             return this.api
@@ -586,7 +586,6 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       0,
     );
     if (!totalPositions) {
-      gLogger.info("Trader.processWonState", `/state ${this._globalStatus}`);
       this._globalStatus = {
         status: StatusType.Idle,
         [LegTypeEnum.Put]: undefined,
@@ -735,7 +734,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           await this.updatePositions(); // Update all positions
         }
         if (this._globalStatus.status == StatusType.Dealing) {
-          this.processDealingState(); // Check if all positions are open
+          await this.processDealingState(); // Check if all positions are open
         }
         if (this._globalStatus.status == StatusType.Position) {
           await this.processBothLegs();
