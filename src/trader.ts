@@ -405,7 +405,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
         );
         const size = Math.max(
           Math.floor((this.budget * 50) / denomo) / 50,
-          0.02, // min size of 0.02
+          0.03, // min size of 0.03
         );
 
         await legtypes.reduce(
