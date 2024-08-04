@@ -117,7 +117,7 @@ export class Trader {
     this._x2WinningLevel = 2;
     this._x2ExitSize = 0.5;
     this._x3WinningLevel = 3;
-    this._x3ExitSize = 0.67;
+    this._x3ExitSize = 0.5;
 
     // For debugging/replay purpose
     if (this.config.has("trader.event"))
@@ -405,7 +405,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
         );
         const size = Math.max(
           Math.floor((this.budget * 50) / denomo) / 50,
-          0.03, // min size of 0.03
+          0.05, // min size
         );
 
         await legtypes.reduce(

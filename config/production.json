@@ -1,13 +1,14 @@
 {
   "gLogger": {
-    "console": "info"
+    "console": "info",
+    "default": "debug"
   },
   "telegram": {
     "apiKey": "replace with your telegram bot api key and chat ID",
     "console": false
   },
   "trader": {
-    "budget": 5,
-    "sampling": 5
+    "budget": 8,
+    "sampling": 6
   }
 }

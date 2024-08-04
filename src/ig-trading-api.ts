@@ -274,14 +274,15 @@ export class APIClient {
                 );
                 throw Error(errorData.errorCode);
               });
+          } else {
+            gLogger.log(
+              LogLevel.Error,
+              "APIClient.call:1",
+              undefined,
+              errorData.errorCode,
+            );
+            throw Error(errorData.errorCode);
           }
-          gLogger.log(
-            LogLevel.Error,
-            "APIClient.call:1",
-            undefined,
-            errorData.errorCode,
-          );
-          throw Error(errorData.errorCode);
         } else {
           gLogger.log(LogLevel.Debug, "APIClient.call:2", undefined, error);
           gLogger.log(
