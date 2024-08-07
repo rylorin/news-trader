@@ -6,6 +6,7 @@
     "event": "+6",
     "state": {
       "status": "Idle"
-    }
+    },
+    "delay": -1
   }
 }

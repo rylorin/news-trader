@@ -21,7 +21,7 @@
     "underlying": "US Tech 100 Barrière",
     "delta": 50,
     "budget": 1,
-    "delay": -1,
+    "delay": -30,
     "sampling": 30,
     "stopLevel": 0.5
   }
