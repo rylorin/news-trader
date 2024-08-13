@@ -686,9 +686,29 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           "Trader.processOneLeg",
           `Sell (${this._x3ExitSize * 100}%/x3 level) ${exitSize} ${legData.contract.instrumentName} @ ${legData.contract.bid} ${this._currency}`,
         );
-        return this.closeLegAbs(leg, exitSize).then((_dealConfirmation) => {
-          legData.x3PartSold = true;
-        });
+        return this.closeLegAbs(leg, exitSize).then(
+          async (_dealConfirmation) => {
+            legData.x3PartSold = true;
+            // Fully Sell opposite (losing) leg
+            const oppositeLegData = this.globalStatus[oppositeLeg(leg)];
+            if (
+              oppositeLegData &&
+              oppositeLegData.position &&
+              oppositeLegData.contract.bid
+            ) {
+              const exitSize = oppositeLegData.position.size;
+              gLogger.info(
+                "Trader.processOneLeg",
+                `Sell (opposite lost) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+              );
+              return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
+                (_dealConfirmation) => {
+                  oppositeLegData.losingPartSold = true;
+                },
+              );
+            }
+          },
+        );
       }
     }
     return Promise.resolve();

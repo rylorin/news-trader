@@ -1,5 +1,6 @@
 {
   "gLogger": {
+    "dir": "/var/log/",
     "console": "info",
     "default": "debug"
   },
@@ -8,7 +9,7 @@
     "console": false
   },
   "trader": {
-    "budget": 8,
+    "budget": 10,
     "sampling": 6
   }
 }

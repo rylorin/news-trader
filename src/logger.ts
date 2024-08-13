@@ -96,8 +96,8 @@ export class Logger {
           }),
         }),
         new transports.File({
-          dirname: "./logs",
-          filename: "default.csv",
+          dirname: this.config.get("gLogger.dir"),
+          filename: "newstrader.csv",
           level: this.config.get("gLogger.default"),
           tailable: true,
           format: format.combine(

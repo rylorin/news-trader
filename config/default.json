@@ -1,5 +1,6 @@
 {
   "gLogger": {
+    "dir": "./logs",
     "console": "debug",
     "default": "silly",
     "telegram": "info"
