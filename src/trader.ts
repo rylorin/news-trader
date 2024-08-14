@@ -163,7 +163,7 @@ Each leg will be at a distance of ${this._delta} from the ${this._underlying} le
 
 Exits Conditions:
 We will sell ${Math.round(this._x2ExitSize * 100)}% of any position reaching ${this._x2WinningLevel * 100}% of its entry price and simultaneously sell ${this._oppositeExitSize * 100}% of the opposite leg.
-We will sell ${Math.round(this._x3ExitSize * 100)}% of any position reaching ${this._x3WinningLevel * 100}% of its entry price; and then sell ${this._losingExitSize * 100}% if price falls ${this._trailingStopLevel * 100}% from its highest price.
+We will sell ${Math.round(this._x3ExitSize * 100)}% of any position reaching ${this._x3WinningLevel * 100}% of its entry price and simultaneously close the remaining opposite leg; and then sell ${this._losingExitSize * 100}% if price falls ${this._trailingStopLevel * 100}% from its highest price.
 
 Losing Exit Conditions:
 We will sell ${this._losingExitSize * 100}% of any position which price falls below ${this._stopLevel * 100}% of the entry price.
@@ -699,7 +699,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
               const exitSize = oppositeLegData.position.size;
               gLogger.info(
                 "Trader.processOneLeg",
-                `Sell (opposite lost) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
+                `Sell (lost opposite) ${exitSize} ${oppositeLegData.contract.instrumentName} @ ${oppositeLegData.contract.bid} ${this._currency}`,
               );
               return this.closeLegAbs(oppositeLeg(leg), exitSize).then(
                 (_dealConfirmation) => {

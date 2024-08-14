@@ -52,11 +52,15 @@ export function parseEvent(text: string): number | undefined {
       event = undefined;
       break;
     default:
-      // Only events in the future are accepted
       if (text.startsWith("+")) {
         const mins = parseInt(text.substring(1));
         event = now + mins * 60_000;
+      } else if (text.length < 10) {
+        const s = new Date().toISOString().substring(0, 11) + text;
+        // Only events in the future are accepted
+        event = new Date(s).getTime() > now ? new Date(s).getTime() : undefined;
       } else {
+        // Only events in the future are accepted
         event =
           new Date(text.toUpperCase()).getTime() > now ?
             new Date(text.toUpperCase()).getTime()
