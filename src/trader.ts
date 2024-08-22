@@ -80,7 +80,7 @@ export class Trader {
   private _sampling: number;
 
   private _stopLevel: number;
-  private readonly _trailingStopLevel: number;
+  private _trailingStopLevel: number;
   private _losingExitSize: number;
   private readonly _oppositeExitSize: number;
   private readonly _x2WinningLevel: number;
@@ -111,7 +111,7 @@ export class Trader {
     this._sampling = this.config.get("trader.sampling"); // secs
 
     this._stopLevel = this.config.get("trader.stopLevel");
-    this._trailingStopLevel = 0.15;
+    this._trailingStopLevel = this.config.get("trader.trailingStopLevel");
     this._losingExitSize = 0.5;
     this._oppositeExitSize = 0.5;
     this._x2WinningLevel = 2;
@@ -261,6 +261,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
   public set stoplevel(value: number) {
     this._stopLevel = value;
+  }
+
+  public get trailingStopLevel(): number {
+    return this._trailingStopLevel;
+  }
+  public set trailingStopLevel(value: number) {
+    this._trailingStopLevel = value;
   }
 
   public async start(): Promise<void> {

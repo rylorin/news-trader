@@ -53,7 +53,8 @@ delta - get/set legs strikes delta to underlying level
 delay - get/set delay in mins at which trading will occurs related to event. <0 will trade before event, >0 will trade after event.
 sampling - get/set frequency in secs used to check trading conditions
 budget - get/set trading budget
-stoplevel - get/set trailing stop loss in percents from session highs
+stoplevel - get/set trailing stop loss in percents from entry price
+trailingstoplevel - get/set trailing stop loss in percents from session highs
 positions - display bot managed positions
 close - close bot managed positions
 account - display account balance
@@ -102,6 +103,9 @@ explain - explain strategy
       );
       this.telegram.command("stoplevel", async (ctx) =>
         this.handleStopLevelCommand(ctx),
+      );
+      this.telegram.command("trailingstoplevel", async (ctx) =>
+        this.handleTrailingStopLevelCommand(ctx),
       );
       this.telegram.command("budget", async (ctx) =>
         this.handleBudgetCommand(ctx),
@@ -346,6 +350,32 @@ explain - explain strategy
       .reply(`/stoplevel ${this.trader.stoplevel}`)
       .catch((err: Error) =>
         gLogger.error("MyTradingBotApp.handleStopLevelCommand", err.message),
+      );
+  }
+
+  private async handleTrailingStopLevelCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleTrailingStopLevelCommand",
+      "Handle 'trailingstoplevel' command",
+    );
+    if (ctx.payload) {
+      const arg = ctx.payload.trim();
+      this.trader.trailingStopLevel = parseFloat(arg);
+    }
+    await ctx
+      .reply(`/trailingstoplevel ${this.trader.trailingStopLevel}`)
+      .catch((err: Error) =>
+        gLogger.error(
+          "MyTradingBotApp.handleTrailingStopLevelCommand",
+          err.message,
+        ),
       );
   }
 
