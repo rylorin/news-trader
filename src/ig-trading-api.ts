@@ -23,6 +23,7 @@ import {
   TradingSession,
 } from "ig-trading-api";
 import { gLogger, LogLevel } from "./logger";
+import { DEFAULT_RETRY_CONFIG, RetryHelper } from "./retry-helper";
 
 enum IgApiEndpoint {
   CreateSession,
@@ -222,78 +223,89 @@ export class APIClient {
     params?: Record<string, any>,
     headers?: Record<string, any>,
   ): Promise<T> {
-    return this.submit_request(api, params, headers) // {status:number; statusText:string;error:Record<string,any>;data:T}
-      .then((response) => response.data as T)
-      .catch(async (error: AxiosError) => {
-        if (
-          error.response &&
-          [400, 401].includes(error.response.status) &&
-          error.response.data
-        ) {
-          gLogger.log(
-            LogLevel.Trace,
-            "APIClient.call:1",
-            undefined,
-            error.response,
-          );
-          const errorData = error.response.data as {
-            errorCode: string;
-          };
-          if (
-            [
-              "error.security.oauth-token-invalid",
-              "error.security.client-token-missing",
-            ].includes(errorData.errorCode)
-          ) {
-            // Reconnect session
-            this.oauthToken = undefined;
-            return this.submit_request(
-              IgApiEndpoint.CreateSession,
-              {
-                encryptedPassword: false,
-                identifier: this.identifier,
-                password: this.password,
-              },
-              { Version: "3" },
-            )
-              .then(async (response) => {
-                this.oauthToken = response.data.oauthToken;
-                // And retry
-                return this.submit_request(api, params, headers);
-              })
-              .then((response) => response.data as T)
-              .catch((error: AxiosError) => {
-                const errorData = error.response?.data as {
-                  errorCode: string;
-                };
+    const operationName = `${IgApiEndpoint[api]}`;
+
+    return RetryHelper.withRetry(
+      async () => {
+        return this.submit_request(api, params, headers)
+          .then((response) => response.data as T)
+          .catch(async (error: AxiosError) => {
+            if (
+              error.response &&
+              [400, 401].includes(error.response.status) &&
+              error.response.data
+            ) {
+              gLogger.log(
+                LogLevel.Trace,
+                "APIClient.call:1",
+                undefined,
+                error.response,
+              );
+              const errorData = error.response.data as {
+                errorCode: string;
+              };
+              if (
+                [
+                  "error.security.oauth-token-invalid",
+                  "error.security.client-token-missing",
+                ].includes(errorData.errorCode)
+              ) {
+                // Reconnect session
+                this.oauthToken = undefined;
+                return this.submit_request(
+                  IgApiEndpoint.CreateSession,
+                  {
+                    encryptedPassword: false,
+                    identifier: this.identifier,
+                    password: this.password,
+                  },
+                  { Version: "3" },
+                )
+                  .then(async (response) => {
+                    this.oauthToken = response.data.oauthToken;
+                    // And retry
+                    return this.submit_request(api, params, headers);
+                  })
+                  .then((response) => response.data as T)
+                  .catch((error: AxiosError) => {
+                    const errorData = error.response?.data as {
+                      errorCode: string;
+                    };
+                    gLogger.log(
+                      LogLevel.Error,
+                      "APIClient.call:3",
+                      undefined,
+                      errorData.errorCode,
+                    );
+                    throw Error(errorData.errorCode);
+                  });
+              } else {
                 gLogger.log(
                   LogLevel.Error,
-                  "APIClient.call:3",
+                  "APIClient.call:1",
                   undefined,
                   errorData.errorCode,
                 );
                 throw Error(errorData.errorCode);
-              });
-          } else {
-            gLogger.log(
-              LogLevel.Error,
-              "APIClient.call:1",
-              undefined,
-              errorData.errorCode,
-            );
-            throw Error(errorData.errorCode);
-          }
-        } else {
-          gLogger.log(LogLevel.Debug, "APIClient.call:2", undefined, error);
-          gLogger.log(
-            LogLevel.Error,
-            "APIClient.call:2",
-            undefined,
-            error.message,
-          );
-          throw error;
-        }
-      });
+              }
+            } else {
+              gLogger.log(LogLevel.Debug, "APIClient.call:2", undefined, error);
+              gLogger.log(
+                LogLevel.Error,
+                "APIClient.call:2",
+                undefined,
+                error.message,
+              );
+              throw error;
+            }
+          });
+      },
+      operationName,
+      {
+        ...DEFAULT_RETRY_CONFIG,
+        maxRetries: 2, // Reduce retries for API calls to avoid rate limiting
+      },
+    );
   }
 
   public async createSession(

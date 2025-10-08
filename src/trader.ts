@@ -7,8 +7,10 @@ import { IConfig } from "config";
 
 // The following can relying on env var and config
 import { Account, DealConfirmation, Market, Position } from "ig-trading-api";
+import { ApiError, ValidationError } from "./errors";
 import { APIClient } from "./ig-trading-api";
 import { gLogger } from "./logger";
+import { TradingMetrics } from "./metrics";
 import { deepCopy, oppositeLeg, parseEvent, string2boolean } from "./utils";
 
 export type PositionEntry = {
@@ -132,6 +134,109 @@ export class Trader {
       config.get("ig-api.url"),
       this.config.get(`ig-api.api-key`),
     );
+
+    // Validate initial parameters
+    this.validateTradingParameters();
+  }
+
+  /**
+   * Validate trading parameters to ensure they are within safe ranges
+   */
+  private validateTradingParameters(): void {
+    if (this._budget <= 0) {
+      throw new ValidationError("Budget must be positive", "budget");
+    }
+    if (this._budget > 10000) {
+      throw new ValidationError(
+        "Budget exceeds safety limit of 10,000",
+        "budget",
+      );
+    }
+
+    if (this._delta <= 0) {
+      throw new ValidationError("Delta must be positive", "delta");
+    }
+    if (this._delta > 1000) {
+      throw new ValidationError(
+        "Delta exceeds reasonable limit of 1,000",
+        "delta",
+      );
+    }
+
+    if (this._stopLevel <= 0 || this._stopLevel >= 1) {
+      throw new ValidationError(
+        "Stop level must be between 0 and 1",
+        "stopLevel",
+      );
+    }
+
+    if (this._trailingStopLevel <= 0 || this._trailingStopLevel >= 1) {
+      throw new ValidationError(
+        "Trailing stop level must be between 0 and 1",
+        "trailingStopLevel",
+      );
+    }
+
+    if (this._sampling < 1) {
+      throw new ValidationError(
+        "Sampling interval must be at least 1 second",
+        "sampling",
+      );
+    }
+    if (this._sampling > 3600) {
+      throw new ValidationError(
+        "Sampling interval exceeds 1 hour limit",
+        "sampling",
+      );
+    }
+
+    if (!/^[A-Z]{3}$/.test(this._currency)) {
+      throw new ValidationError(
+        "Currency must be a 3-letter code (e.g., USD, EUR)",
+        "currency",
+      );
+    }
+  }
+
+  /**
+   * Safe wrapper for API calls with proper error handling
+   */
+  private async safeApiCall<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      const errorMessage = `${operationName} failed: ${error instanceof Error ? error.message : String(error)}`;
+      gLogger.error("Trader.safeApiCall", errorMessage);
+
+      if (error instanceof Error) {
+        throw new ApiError(errorMessage, undefined, error);
+      } else {
+        throw new ApiError(errorMessage);
+      }
+    }
+  }
+
+  /**
+   * Validate a single parameter value
+   */
+  private validateParameter(
+    name: string,
+    value: number,
+    min?: number,
+    max?: number,
+  ): void {
+    if (typeof value !== "number" || isNaN(value)) {
+      throw new ValidationError(`${name} must be a valid number`, name);
+    }
+    if (min !== undefined && value < min) {
+      throw new ValidationError(`${name} must be at least ${min}`, name);
+    }
+    if (max !== undefined && value > max) {
+      throw new ValidationError(`${name} must not exceed ${max}`, name);
+    }
   }
 
   public toString(): string {
@@ -207,6 +312,12 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._currency;
   }
   public set currency(value: string) {
+    if (!/^[A-Z]{3}$/.test(value)) {
+      throw new ValidationError(
+        "Currency must be a 3-letter code (e.g., USD, EUR)",
+        "currency",
+      );
+    }
     this._currency = value;
   }
 
@@ -214,6 +325,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._delta;
   }
   public set delta(value: number) {
+    this.validateParameter("delta", value, 1, 1000);
     this._delta = value;
   }
 
@@ -221,6 +333,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._budget;
   }
   public set budget(value: number) {
+    this.validateParameter("budget", value, 0.01, 10000);
     this._budget = value;
   }
 
@@ -253,6 +366,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._sampling;
   }
   public set sampling(value: number) {
+    this.validateParameter("sampling", value, 1, 3600);
     this._sampling = value;
   }
 
@@ -260,6 +374,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._stopLevel;
   }
   public set stoplevel(value: number) {
+    this.validateParameter("stoplevel", value, 0.01, 0.99);
     this._stopLevel = value;
   }
 
@@ -267,13 +382,18 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return this._trailingStopLevel;
   }
   public set trailingStopLevel(value: number) {
+    this.validateParameter("trailingStopLevel", value, 0.01, 0.99);
     this._trailingStopLevel = value;
   }
 
   public async start(): Promise<void> {
-    const session = await this.api.createSession(
-      this.config.get("ig-api.username"),
-      this.config.get("ig-api.password"),
+    const session = await this.safeApiCall(
+      () =>
+        this.api.createSession(
+          this.config.get("ig-api.username"),
+          this.config.get("ig-api.password"),
+        ),
+      "createSession",
     );
     gLogger.info("Trader.start", `Client ID is "${session.clientId}".`);
     this.started = true;
@@ -288,21 +408,34 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   private async getDailyOptionsOf(market: string): Promise<MarketX[]> {
     gLogger.debug("Trader.getDailyOptionsOf", market);
 
-    let markets = await this.api.getMarketNavigation();
+    let markets = await this.safeApiCall(
+      () => this.api.getMarketNavigation(),
+      "getMarketNavigation",
+    );
     const topMarketId = markets.nodes?.find((item) => item.name == market);
 
-    markets = await this.api.getMarketNavigation(topMarketId?.id);
+    markets = await this.safeApiCall(
+      () => this.api.getMarketNavigation(topMarketId?.id),
+      "getMarketNavigation",
+    );
     gLogger.trace("Trader.getDailyOptionsOf", market, markets);
     const dailyOptionsId = markets.nodes?.find(
       (item) => item.name == "Options jour",
     );
-    // console.log("dailyOptionsId", dailyOptionsId);
 
-    markets = await this.api.getMarketNavigation(dailyOptionsId?.id);
+    markets = await this.safeApiCall(
+      () => this.api.getMarketNavigation(dailyOptionsId?.id),
+      "getMarketNavigation",
+    );
     const todayOptionsId = markets.nodes?.find((item) => item.name == "Jour");
-    // console.log("todayOptionsId", todayOptionsId);
-    const result = (await this.api.getMarketNavigation(todayOptionsId?.id))
-      .markets!;
+
+    const result = (
+      await this.safeApiCall(
+        () => this.api.getMarketNavigation(todayOptionsId?.id),
+        "getMarketNavigation",
+      )
+    ).markets!;
+
     return result
       ?.filter((item) => item.marketStatus == "TRADEABLE")
       .map((item) => ({
@@ -312,8 +445,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   public async getUnderlyingPrice(): Promise<number> {
-    const markets = (await this.api.searchMarkets(this._underlying)).markets;
-    // console.log(markets);
+    const markets = (
+      await this.safeApiCall(
+        () => this.api.searchMarkets(this._underlying),
+        "searchMarkets",
+      )
+    ).markets;
+
     const sum = markets.reduce(
       (p, v) => (v.bid && v.offer ? p + v.bid + v.offer : p),
       0,
@@ -323,7 +461,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private getStrike(name: string): number {
-    return parseFloat(name.split(" ").at(-2)!);
+    return parseFloat(name.split(" ").at(-3)!);
   }
 
   private findEntryContract(
@@ -336,7 +474,11 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     return legtypes.reduce(
       (p, leg) => {
         p[leg] = options
-          .filter((item) => item.instrumentName.endsWith(leg.toUpperCase()))
+          .filter((item) => item.instrumentName.includes(leg.toUpperCase()))
+          .map((item) => {
+            // console.log(item);
+            return item;
+          })
           .filter((item) =>
             leg == LegTypeEnum.Put ? item.strike < price : item.strike > price,
           )
@@ -377,13 +519,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
         // Display countdown every ten mins
         gLogger.info(
           "Trader.processIdleState",
-          `${eventDelay} min(s) before trading.`,
+          `${eventDelay} mins before trading.`,
         );
     } else if (eventDelay > 0) {
       // Display countdown every min
       gLogger.info(
         "Trader.processIdleState",
-        `${eventDelay} min(s) before trading.`,
+        `${eventDelay} min${eventDelay > 1 ? "s" : ""} before trading.`,
       );
     }
     this.lastCount = eventDelay;
@@ -399,6 +541,11 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       const options = await this.getDailyOptionsOf(this._market);
       // Get underlying price
       const price = await this.getUnderlyingPrice();
+      // console.log(`Underlying price is ${price}`);
+      // console.log(`Found ${options.length} daily options`);
+      // console.log(
+      //   `Options: ${options.map((item) => item.instrumentName).join(", ")}`,
+      // );
 
       if (options && price) {
         // Place an entry order
@@ -406,6 +553,18 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
 
         // Get delta distance put and call
         const twoLegsContracts = this.findEntryContract(options, price);
+        // console.log(twoLegsContracts);
+        if (
+          !twoLegsContracts[LegTypeEnum.Put] ||
+          !twoLegsContracts[LegTypeEnum.Call]
+        ) {
+          gLogger.error(
+            "Trader.processIdleState",
+            "Can't find both legs for the strangle!",
+          );
+          this.globalStatus.status = StatusType.Idle;
+          return;
+        }
         const denomo = legtypes.reduce(
           (p, leg) => p + twoLegsContracts[leg]!.offer!,
           0,
@@ -487,26 +646,28 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private async updatePositions(): Promise<void> {
-    return this.api.getPositions().then((response) => {
-      legtypes.forEach((leg) => {
-        const legData: LegDealStatus | undefined = this.globalStatus[leg];
-        if (legData) {
-          const position = response.positions.find(
-            (item) => item.position.dealReference == legData.dealReference,
-          );
-          legData.position = position?.position;
-          if (position) {
-            legData.contract = {
-              ...position.market,
-              strike: this.getStrike(position.market.instrumentName),
-            };
-            if (!legData.ath) legData.ath = position.position.level;
-            if (legData.contract.bid! > legData.ath)
-              legData.ath = position.market.bid!;
+    return this.safeApiCall(() => this.api.getPositions(), "getPositions").then(
+      (response) => {
+        legtypes.forEach((leg) => {
+          const legData: LegDealStatus | undefined = this.globalStatus[leg];
+          if (legData) {
+            const position = response.positions.find(
+              (item) => item.position.dealReference == legData.dealReference,
+            );
+            legData.position = position?.position;
+            if (position) {
+              legData.contract = {
+                ...position.market,
+                strike: this.getStrike(position.market.instrumentName),
+              };
+              if (!legData.ath) legData.ath = position.position.level;
+              if (legData.contract.bid! > legData.ath)
+                legData.ath = position.market.bid!;
+            }
           }
-        }
-      });
-    });
+        });
+      },
+    );
   }
 
   public async closeLeg(
@@ -603,7 +764,10 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   public async getAccount(): Promise<Account> {
-    const accounts = await this.api.getAccounts();
+    const accounts = await this.safeApiCall(
+      async () => this.api.getAccounts(),
+      "getAccounts",
+    );
     return accounts.accounts[0];
   }
 
@@ -816,6 +980,14 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       },
       {} as Record<LegType, PositionEntry | undefined>,
     );
+
+    // Update position metrics
+    const positionCount = legtypes.reduce(
+      (count, leg) => (result[leg] ? count + 1 : count),
+      0,
+    );
+    TradingMetrics.updatePositionCount(positionCount);
+
     return result;
   }
 }

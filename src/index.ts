@@ -14,7 +14,11 @@ import { Context, Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Message, Update } from "telegraf/typings/core/types/typegram";
 import { CommandContextExtn } from "telegraf/typings/telegram-types";
+import { ConfigValidator } from "./config-validator";
+import { ConfigurationError, TradingError } from "./errors";
+import { HealthCheckService } from "./health-check";
 import { gLogger, LogLevel } from "./logger";
+import { TelegramCommandHandler } from "./telegram-command-handler";
 import { LegType, legtypes, Trader } from "./trader";
 import { formatObject, parseEvent, string2boolean } from "./utils";
 
@@ -22,14 +26,45 @@ export class MyTradingBotApp {
   private readonly config: IConfig;
   private readonly trader: Trader;
   private readonly telegram: Telegraf | undefined;
+  private readonly commandHandler: TelegramCommandHandler | undefined;
+  private readonly healthCheck: HealthCheckService;
   private timer: NodeJS.Timeout | undefined;
+  private healthCheckTimer: NodeJS.Timeout | undefined;
 
   constructor(config: IConfig) {
     this.config = config;
 
+    // Validate configuration before creating trader
+    try {
+      ConfigValidator.validate(config);
+      gLogger.info(
+        "MyTradingBotApp.constructor",
+        "Configuration validation passed",
+      );
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        gLogger.error(
+          "MyTradingBotApp.constructor",
+          `Configuration error: ${error.message}`,
+        );
+        throw error;
+      } else {
+        gLogger.error(
+          "MyTradingBotApp.constructor",
+          `Unexpected error during configuration validation: ${String(error)}`,
+        );
+        throw new ConfigurationError(
+          "Configuration validation failed",
+          undefined,
+        );
+      }
+    }
+
     this.trader = new Trader(config);
+    this.healthCheck = new HealthCheckService(this.trader);
 
     if (this.config.get("telegram.apiKey")) {
+      this.commandHandler = new TelegramCommandHandler(this.trader);
       // Create telegram bot to control application
       this.telegram = new Telegraf(this.config.get("telegram.apiKey"));
       this.telegram.start(async (ctx) =>
@@ -66,61 +101,67 @@ explain - explain strategy
         ctx.reply(formatObject(ctx.update)),
       );
       this.telegram.command("pause", async (ctx) =>
-        this.handlePauseCommand(ctx),
+        this.commandHandler!.handlePauseCommand(ctx),
       );
       this.telegram.command("status", async (ctx) =>
-        this.handleStatusCommand(ctx),
+        this.commandHandler!.handleStatusCommand(ctx),
       );
       this.telegram.command("state", async (ctx) =>
         this.handleStateCommand(ctx),
       );
       this.telegram.command("exit", async (ctx) => this.handleExitCommand(ctx));
+      this.telegram.command("health", async (ctx) =>
+        this.handleHealthCommand(ctx),
+      );
+
       // Trader settings commands
-      this.telegram.command("name", async (ctx) => this.handleNameCommand(ctx));
+      this.telegram.command("name", async (ctx) =>
+        this.commandHandler!.handleNameCommand(ctx),
+      );
       this.telegram.command("market", async (ctx) =>
-        this.handleMarketCommand(ctx),
+        this.commandHandler!.handleMarketCommand(ctx),
       );
       this.telegram.command("underlying", async (ctx) =>
-        this.handleUnderlyingCommand(ctx),
+        this.commandHandler!.handleUnderlyingCommand(ctx),
       );
       this.telegram.command("currency", async (ctx) =>
-        this.handleCurrencyCommand(ctx),
+        this.commandHandler!.handleCurrencyCommand(ctx),
       );
       this.telegram.command("price", async (ctx) =>
-        this.handlePriceCommand(ctx),
+        this.commandHandler!.handlePriceCommand(ctx),
       );
       this.telegram.command("event", async (ctx) =>
-        this.handleEventCommand(ctx),
+        this.commandHandler!.handleEventCommand(ctx),
       );
       this.telegram.command("delta", async (ctx) =>
-        this.handleDeltaCommand(ctx),
+        this.commandHandler!.handleDeltaCommand(ctx),
       );
       this.telegram.command("delay", async (ctx) =>
-        this.handleDelayCommand(ctx),
+        this.commandHandler!.handleDelayCommand(ctx),
       );
       this.telegram.command("sampling", async (ctx) =>
-        this.handleSamplingCommand(ctx),
+        this.commandHandler!.handleSamplingCommand(ctx),
       );
       this.telegram.command("stoplevel", async (ctx) =>
-        this.handleStopLevelCommand(ctx),
+        this.commandHandler!.handleStopLevelCommand(ctx),
       );
       this.telegram.command("trailingstoplevel", async (ctx) =>
-        this.handleTrailingStopLevelCommand(ctx),
+        this.commandHandler!.handleTrailingStopLevelCommand(ctx),
       );
       this.telegram.command("budget", async (ctx) =>
-        this.handleBudgetCommand(ctx),
+        this.commandHandler!.handleBudgetCommand(ctx),
       );
       this.telegram.command("positions", async (ctx) =>
-        this.handlePositionsCommand(ctx),
+        this.commandHandler!.handlePositionsCommand(ctx),
       );
       this.telegram.command("close", async (ctx) =>
-        this.handleCloseCommand(ctx),
+        this.commandHandler!.handleCloseCommand(ctx),
       );
       this.telegram.command("account", async (ctx) =>
-        this.handleAccountCommand(ctx),
+        this.commandHandler!.handleAccountCommand(ctx),
       );
       this.telegram.command("explain", async (ctx) =>
-        this.handleExplainCommand(ctx),
+        this.commandHandler!.handleExplainCommand(ctx),
       );
       // Catch-alls
       this.telegram.on(message("sticker"), Telegraf.reply("👍"));
@@ -135,6 +176,39 @@ explain - explain strategy
           `Hello ${ctx.message.from.username}. What do you mean by '${ctx.text}'? 🧐`,
         ),
       );
+    }
+  }
+
+  /**
+   * Handle the 'health' command - show system health status
+   */
+  private async handleHealthCommand(
+    ctx: Context<{
+      message: Update.New & Update.NonChannel & Message.TextMessage;
+      update_id: number;
+    }> &
+      Omit<Context<Update>, keyof Context<Update>> &
+      CommandContextExtn,
+  ): Promise<void> {
+    gLogger.debug(
+      "MyTradingBotApp.handleHealthCommand",
+      "Handle 'health' command",
+    );
+    try {
+      const healthReport = await this.healthCheck.performHealthCheck();
+      const summary = `System Health: ${healthReport.status.toUpperCase()}
+Uptime: ${Math.round(healthReport.uptime / 1000 / 60)} minutes
+Checks: ${healthReport.checks.length}
+
+${healthReport.checks
+  .map((check) => `${check.name}: ${check.status} - ${check.message}`)
+  .join("\n")}`;
+
+      await ctx.reply(summary);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      gLogger.error("MyTradingBotApp.handleHealthCommand", errorMsg);
+      await ctx.reply(`Health check failed: ${errorMsg}`);
     }
   }
 
@@ -637,12 +711,15 @@ explain - explain strategy
   public async start(): Promise<void> {
     await this.trader.start();
 
-    // this.timer = setInterval(() => {
-    //   this.check().catch((err: Error) => {
-    //     console.log(err);
-    //     gLogger.error("MyTradingBotApp.check", err.message);
-    //   });
-    // }, 10_000);
+    // Start periodic health checks
+    this.healthCheckTimer = setInterval(() => {
+      this.healthCheck.logHealthStatus().catch((err: Error) => {
+        gLogger.error("MyTradingBotApp.healthCheck", err.message);
+      });
+    }, 300_000); // Every 5 minutes
+
+    // Initial health check
+    await this.healthCheck.logHealthStatus();
 
     await this.telegram?.launch(() => undefined); // WARNING: this call never returns
   }
@@ -655,6 +732,8 @@ explain - explain strategy
   public async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+    this.healthCheckTimer = undefined;
     return this.trader.stop();
   }
 
@@ -666,10 +745,38 @@ explain - explain strategy
 }
 
 gLogger.debug("main", `NODE_ENV=${process.env["NODE_ENV"]}`);
-const bot = new MyTradingBotApp(config);
-// Enable graceful stop
-process.once("SIGINT", () => bot.exit("SIGINT"));
-process.once("SIGTERM", () => bot.exit("SIGTERM"));
-bot
-  .start()
-  .catch((err: Error) => gLogger.log(LogLevel.Fatal, "main", undefined, err));
+
+try {
+  const bot = new MyTradingBotApp(config);
+  // Enable graceful stop
+  process.once("SIGINT", () => bot.exit("SIGINT"));
+  process.once("SIGTERM", () => bot.exit("SIGTERM"));
+  bot.start().catch((err: Error) => {
+    if (err instanceof TradingError) {
+      gLogger.log(
+        LogLevel.Fatal,
+        "main",
+        undefined,
+        `Trading error: ${err.message}`,
+      );
+    } else {
+      gLogger.log(LogLevel.Fatal, "main", undefined, err);
+    }
+  });
+} catch (error) {
+  if (error instanceof ConfigurationError) {
+    gLogger.log(
+      LogLevel.Fatal,
+      "main",
+      undefined,
+      `Configuration error: ${error.message}`,
+    );
+  } else {
+    gLogger.log(
+      LogLevel.Fatal,
+      "main",
+      undefined,
+      `Startup error: ${String(error)}`,
+    );
+  }
+}

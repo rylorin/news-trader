@@ -19,12 +19,12 @@
     "pause": false,
     "market": "Options (US Tech 100)",
     "currency": "USD",
-    "underlying": "US Tech 100 Barrière",
+    "underlying": "US Tech 100 Barrières",
     "delta": 55,
     "budget": 1,
-    "delay": -15,
+    "delay": -5,
     "sampling": 30,
     "stopLevel": 0.5,
-    "trailingStopLevel": 0.1
+    "trailingStopLevel": 0.2
   }
 }

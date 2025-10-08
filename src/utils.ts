@@ -1,3 +1,4 @@
+import { ValidationError } from "./errors";
 import { LegType, LegTypeEnum } from "./trader";
 
 /**
@@ -40,9 +41,14 @@ export function oppositeLeg(leg: LegType): LegType {
 }
 
 export function parseEvent(text: string): number | undefined {
+  if (!text || typeof text !== "string") {
+    throw new ValidationError("Event text must be a non-empty string", "event");
+  }
+
   const now = Date.now();
-  let event;
-  switch (text.toLowerCase()) {
+  let event: number | undefined;
+
+  switch (text.toLowerCase().trim()) {
     case "now":
       event = now;
       break;
@@ -53,18 +59,45 @@ export function parseEvent(text: string): number | undefined {
       break;
     default:
       if (text.startsWith("+")) {
-        const mins = parseInt(text.substring(1));
+        const minsStr = text.substring(1);
+        const mins = parseInt(minsStr);
+        if (isNaN(mins) || mins < 0) {
+          throw new ValidationError(
+            "Invalid minutes format. Use +N where N is a positive number",
+            "event",
+          );
+        }
+        if (mins > 1440) {
+          // More than 24 hours
+          throw new ValidationError(
+            "Event cannot be scheduled more than 24 hours in advance",
+            "event",
+          );
+        }
         event = now + mins * 60_000;
       } else if (text.length < 10) {
+        // Short time format like "14:30"
+        if (!/^\d{1,2}:\d{2}$/.test(text)) {
+          throw new ValidationError(
+            "Invalid time format. Use HH:MM format",
+            "event",
+          );
+        }
         const s = new Date().toISOString().substring(0, 11) + text;
+        const parsedTime = new Date(s).getTime();
+        if (isNaN(parsedTime)) {
+          throw new ValidationError("Invalid time format", "event");
+        }
         // Only events in the future are accepted
-        event = new Date(s).getTime() > now ? new Date(s).getTime() : undefined;
+        event = parsedTime > now ? parsedTime : undefined;
       } else {
+        // Full datetime format
+        const parsedTime = new Date(text.toUpperCase()).getTime();
+        if (isNaN(parsedTime)) {
+          throw new ValidationError("Invalid datetime format", "event");
+        }
         // Only events in the future are accepted
-        event =
-          new Date(text.toUpperCase()).getTime() > now ?
-            new Date(text.toUpperCase()).getTime()
-          : undefined;
+        event = parsedTime > now ? parsedTime : undefined;
       }
   }
   return event;
