@@ -14,7 +14,7 @@
     "prepublishOnly": "yarn build",
     "qc": "yarn lint && yarn type-check && prettier --check .",
     "start": "NODE_ENV=production node build/index.js",
-    "test": "jest",
+    "test": "jest --detectOpenHandles",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "type-check": "tsc --noEmit"

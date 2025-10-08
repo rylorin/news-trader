@@ -24,7 +24,7 @@ export type PositionEntry = {
   ratio: number;
 };
 
-const StatusType = {
+export const StatusType = {
   Idle: "Idle",
   Dealing: "Dealing",
   Position: "Position",
@@ -40,9 +40,9 @@ export type LegType = (typeof LegTypeEnum)[keyof typeof LegTypeEnum];
 
 export const legtypes: LegType[] = [LegTypeEnum.Put, LegTypeEnum.Call];
 
-type MarketX = Market & { strike: number };
+export type MarketX = Market & { strike: number };
 
-type LegDealStatus = {
+export type LegDealStatus = {
   ath?: number;
   losingPartSold: boolean;
   x2PartSold: boolean;
@@ -53,7 +53,7 @@ type LegDealStatus = {
   position?: Position;
 };
 
-type DealingStatus = {
+export type DealingStatus = {
   status: StatusType;
   [LegTypeEnum.Put]: LegDealStatus | undefined;
   [LegTypeEnum.Call]: LegDealStatus | undefined;
@@ -646,28 +646,29 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private async updatePositions(): Promise<void> {
-    return this.safeApiCall(async () => this.api.getPositions(), "getPositions").then(
-      (response) => {
-        legtypes.forEach((leg) => {
-          const legData: LegDealStatus | undefined = this.globalStatus[leg];
-          if (legData) {
-            const position = response.positions.find(
-              (item) => item.position.dealReference == legData.dealReference,
-            );
-            legData.position = position?.position;
-            if (position) {
-              legData.contract = {
-                ...position.market,
-                strike: this.getStrike(position.market.instrumentName),
-              };
-              if (!legData.ath) legData.ath = position.position.level;
-              if (legData.contract.bid! > legData.ath)
-                legData.ath = position.market.bid!;
-            }
+    return this.safeApiCall(
+      async () => this.api.getPositions(),
+      "getPositions",
+    ).then((response) => {
+      legtypes.forEach((leg) => {
+        const legData: LegDealStatus | undefined = this.globalStatus[leg];
+        if (legData) {
+          const position = response.positions.find(
+            (item) => item.position.dealReference == legData.dealReference,
+          );
+          legData.position = position?.position;
+          if (position) {
+            legData.contract = {
+              ...position.market,
+              strike: this.getStrike(position.market.instrumentName),
+            };
+            if (!legData.ath) legData.ath = position.position.level;
+            if (legData.contract.bid! > legData.ath)
+              legData.ath = position.market.bid!;
           }
-        });
-      },
-    );
+        }
+      });
+    });
   }
 
   public async closeLeg(
