@@ -20,6 +20,8 @@ export const LogLevel = {
 } as const;
 export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 
+/* eslint @typescript-eslint/restrict-template-expressions: "warn"  */
+
 // from colors.js library https://github.com/Marak/colors.js/blob/master/lib/styles.js
 // const bold = [1, 22];
 // const brightRed = [91, 39];

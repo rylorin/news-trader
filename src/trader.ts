@@ -388,7 +388,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
 
   public async start(): Promise<void> {
     const session = await this.safeApiCall(
-      () =>
+      async () =>
         this.api.createSession(
           this.config.get("ig-api.username"),
           this.config.get("ig-api.password"),
@@ -409,13 +409,13 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     gLogger.debug("Trader.getDailyOptionsOf", market);
 
     let markets = await this.safeApiCall(
-      () => this.api.getMarketNavigation(),
+      async () => this.api.getMarketNavigation(),
       "getMarketNavigation",
     );
     const topMarketId = markets.nodes?.find((item) => item.name == market);
 
     markets = await this.safeApiCall(
-      () => this.api.getMarketNavigation(topMarketId?.id),
+      async () => this.api.getMarketNavigation(topMarketId?.id),
       "getMarketNavigation",
     );
     gLogger.trace("Trader.getDailyOptionsOf", market, markets);
@@ -424,14 +424,14 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     );
 
     markets = await this.safeApiCall(
-      () => this.api.getMarketNavigation(dailyOptionsId?.id),
+      async () => this.api.getMarketNavigation(dailyOptionsId?.id),
       "getMarketNavigation",
     );
     const todayOptionsId = markets.nodes?.find((item) => item.name == "Jour");
 
     const result = (
       await this.safeApiCall(
-        () => this.api.getMarketNavigation(todayOptionsId?.id),
+        async () => this.api.getMarketNavigation(todayOptionsId?.id),
         "getMarketNavigation",
       )
     ).markets!;
@@ -447,7 +447,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   public async getUnderlyingPrice(): Promise<number> {
     const markets = (
       await this.safeApiCall(
-        () => this.api.searchMarkets(this._underlying),
+        async () => this.api.searchMarkets(this._underlying),
         "searchMarkets",
       )
     ).markets;
@@ -646,7 +646,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
   }
 
   private async updatePositions(): Promise<void> {
-    return this.safeApiCall(() => this.api.getPositions(), "getPositions").then(
+    return this.safeApiCall(async () => this.api.getPositions(), "getPositions").then(
       (response) => {
         legtypes.forEach((leg) => {
           const legData: LegDealStatus | undefined = this.globalStatus[leg];

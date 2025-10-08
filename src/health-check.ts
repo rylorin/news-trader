@@ -130,7 +130,7 @@ export class HealthCheckService {
   /**
    * Check trader status and configuration
    */
-  private async checkTraderStatus(): Promise<HealthCheckResult> {
+  private checkTraderStatus(): HealthCheckResult {
     const timestamp = Date.now();
     const checkName = "trader_status";
 
@@ -229,7 +229,7 @@ export class HealthCheckService {
   /**
    * Check system resources (memory, etc.)
    */
-  private async checkSystemResources(): Promise<HealthCheckResult> {
+  private checkSystemResources(): HealthCheckResult {
     const timestamp = Date.now();
     const checkName = "system_resources";
 

@@ -57,5 +57,14 @@ export default tseslint.config(
       strict: "error",
     },
   },
-  { ignores: ["node_modules/*", "build/*", "**/*.spec.ts", "*.config.mjs"] },
+  {
+    ignores: [
+      "node_modules/*",
+      "build/*",
+      "**/*.spec.ts",
+      "*.config.mjs",
+      "*.config.js",
+      "src/__tests__/**",
+    ],
+  },
 );

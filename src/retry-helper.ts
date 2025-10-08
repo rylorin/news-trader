@@ -129,7 +129,7 @@ export class RetryHelper {
   /**
    * Simple delay utility
    */
-  private static delay(ms: number): Promise<void> {
+  private static async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
@@ -141,8 +141,9 @@ export class RetryHelper {
     operationName: string,
     config: Partial<RetryConfig> = {},
   ): T {
-    return ((...args: Parameters<T>) => {
-      return this.withRetry(() => fn(...args), operationName, config);
+    return (async (...args: Parameters<T>) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      return this.withRetry(async () => fn(...args), operationName, config);
     }) as T;
   }
 

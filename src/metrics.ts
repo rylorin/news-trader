@@ -364,7 +364,11 @@ export const metrics = new MetricsCollector();
 // Trading-specific metric helpers
 export const TradingMetrics = {
   // API call metrics
-  recordApiCall: (endpoint: string, success: boolean, duration: number) => {
+  recordApiCall: (
+    endpoint: string,
+    success: boolean,
+    duration: number,
+  ): void => {
     metrics.incrementCounter("api_calls_total", 1, {
       endpoint,
       status: success ? "success" : "error",
@@ -378,28 +382,28 @@ export const TradingMetrics = {
     leg: string,
     size: number,
     price: number,
-  ) => {
+  ): void => {
     metrics.incrementCounter("trades_total", 1, { type, leg });
     metrics.recordHistogram("trade_size", size, { type, leg });
     metrics.recordHistogram("trade_price", price, { type, leg });
   },
 
   // Position metrics
-  updatePositionCount: (count: number) => {
+  updatePositionCount: (count: number): void => {
     metrics.setGauge("open_positions", count);
   },
 
-  updateAccountBalance: (balance: number, currency: string) => {
+  updateAccountBalance: (balance: number, currency: string): void => {
     metrics.setGauge("account_balance", balance, { currency });
   },
 
   // Error metrics
-  recordError: (type: string, component: string) => {
+  recordError: (type: string, component: string): void => {
     metrics.incrementCounter("errors_total", 1, { type, component });
   },
 
   // Health check metrics
-  recordHealthCheck: (status: string, duration: number) => {
+  recordHealthCheck: (status: string, duration: number): void => {
     metrics.incrementCounter("health_checks_total", 1, { status });
     metrics.recordTiming("health_check_duration", duration);
   },
