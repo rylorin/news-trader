@@ -135,3 +135,4 @@ config/local*
 docker-env-file
 test.sh
 test.json
+/backup/**

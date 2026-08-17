@@ -1,0 +1,4 @@
+remote: root@vmi789953.contaboserver.net
+rsync_image: eeacms/rsync:latest
+backup_keep: 5
+excludes: []

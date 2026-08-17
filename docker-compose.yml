@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   bot:
     image: rylorin/news-trader:dev
@@ -19,12 +17,12 @@ services:
           - node.role == manager
       replicas: 1
     configs:
-      - source: news-trader.conf
+      - source: news-trader.conf_1
         target: /root/config/local.json
 
 networks:
   default:
 
 configs:
-  news-trader.conf:
+  news-trader.conf_1:
     external: true
