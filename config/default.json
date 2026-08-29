@@ -17,7 +17,7 @@
   },
   "trader": {
     "pause": false,
-    "market": "Options (US Tech 100)",
+    "market": "Daily US Tech 100",
     "currency": "USD",
     "underlying": "US Tech 100 Barrières",
     "delta": 55,

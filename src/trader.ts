@@ -1,6 +1,6 @@
 // Load env vars
-import dotenv from "dotenv";
-dotenv.config();
+// import dotenv from "dotenv";
+// dotenv.config();
 
 // Load config
 import { IConfig } from "config";
@@ -47,7 +47,7 @@ export type LegDealStatus = {
   losingPartSold: boolean;
   x2PartSold: boolean;
   x3PartSold: boolean;
-  contract: MarketX;
+  contract: Market;
   dealReference: string;
   dealConfirmation?: DealConfirmation;
   position?: Position;
@@ -405,46 +405,93 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
     }, 10_000);
   }
 
-  private async getDailyOptionsOf(market: string): Promise<MarketX[]> {
-    gLogger.debug("Trader.getDailyOptionsOf", market);
-
-    let markets = await this.safeApiCall(
-      async () => this.api.getMarketNavigation(),
-      "getMarketNavigation",
-    );
-    const topMarketId = markets.nodes?.find((item) => item.name == market);
-
-    markets = await this.safeApiCall(
-      async () => this.api.getMarketNavigation(topMarketId?.id),
-      "getMarketNavigation",
-    );
-    gLogger.trace("Trader.getDailyOptionsOf", market, markets);
-    const dailyOptionsId = markets.nodes?.find(
-      (item) => item.name == "Options jour",
-    );
-
-    markets = await this.safeApiCall(
-      async () => this.api.getMarketNavigation(dailyOptionsId?.id),
-      "getMarketNavigation",
-    );
-    const todayOptionsId = markets.nodes?.find((item) => item.name == "Jour");
-
-    const result = (
+  private async findOption(
+    market: string,
+    strike: number,
+    leg: string,
+  ): Promise<Market | undefined> {
+    gLogger.debug("Trader.findOption", market, strike, leg);
+    const searchTerm = `${market} ${Math.round(strike)} ${leg.toUpperCase()}`; // Adjust search term as needed
+    const searchResult = (
       await this.safeApiCall(
-        async () => this.api.getMarketNavigation(todayOptionsId?.id),
-        "getMarketNavigation",
+        async () => this.api.searchMarkets(searchTerm),
+        "searchMarkets",
       )
-    ).markets!;
+    ).markets
+      .filter((item) => item.marketStatus == "TRADEABLE")
+      .sort((a, b) => {
+        const aDelta = Math.abs(this.getStrike(a.instrumentName) - strike);
+        const bDelta = Math.abs(this.getStrike(b.instrumentName) - strike);
+        return aDelta - bDelta;
+      })
+      .at(0);
 
-    return result
-      ?.filter((item) => item.marketStatus == "TRADEABLE")
-      .map((item) => ({
-        ...item,
-        strike: this.getStrike(item.instrumentName),
-      }));
+    return searchResult;
   }
 
-  public async getUnderlyingPrice(): Promise<number> {
+  private async getDailyOptionsOf(
+    market: string,
+    underlyingPrice: number,
+    delta: number,
+  ): Promise<{
+    [LegTypeEnum.Put]: Market | undefined;
+    [LegTypeEnum.Call]: Market | undefined;
+  }> {
+    gLogger.debug("Trader.getDailyOptionsOf", market, underlyingPrice, delta);
+    const searchTermPut = `${market} ${Math.round(underlyingPrice - delta)} PUT`; // Adjust search term as needed
+    const searchResultPut = await this.safeApiCall(
+      async () => this.api.searchMarkets(searchTermPut),
+      "searchMarkets",
+    );
+    if (!searchResultPut.markets.length) {
+      gLogger.error(
+        "Trader.getDailyOptionsOf",
+        `Failed to get markets for search term: ${searchTermPut}`,
+      );
+      throw new Error("Failed to get markets");
+    }
+    const searchTermCall = `${market} ${Math.round(underlyingPrice + delta)} CALL`; // Adjust search term as needed
+    const searchResultCall = await this.safeApiCall(
+      async () => this.api.searchMarkets(searchTermCall),
+      "searchMarkets",
+    );
+    if (!searchResultCall.markets.length) {
+      gLogger.error(
+        "Trader.getDailyOptionsOf",
+        `Failed to get markets for search term: ${searchTermCall}`,
+      );
+      throw new Error("Failed to get markets");
+    }
+    gLogger.trace(
+      "Trader.getDailyOptionsOf",
+      searchResultPut,
+      searchResultCall,
+    );
+
+    // return [...searchResultCall.markets, ...searchResultPut.markets]
+    //   .filter((item) => item.marketStatus == "TRADEABLE")
+    //   .map((item) => ({
+    //     ...item,
+    //     strike: this.getStrike(item.instrumentName),
+    //   }));
+    return {
+      [LegTypeEnum.Put]: await this.findOption(
+        market,
+        underlyingPrice - delta,
+        LegTypeEnum.Put,
+      ),
+      [LegTypeEnum.Call]: await this.findOption(
+        market,
+        underlyingPrice + delta,
+        LegTypeEnum.Call,
+      ),
+    };
+  }
+
+  public async getUnderlyingPrice(): Promise<{
+    underlying: string;
+    price: number;
+  }> {
     const markets = (
       await this.safeApiCall(
         async () => this.api.searchMarkets(this._underlying),
@@ -452,12 +499,20 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       )
     ).markets;
 
-    const sum = markets.reduce(
+    // Take first 2 markets (Buy and Sell) as per user requirement
+    const firstTwoMarkets = markets.slice(0, 2);
+
+    const sum = firstTwoMarkets.reduce(
       (p, v) => (v.bid && v.offer ? p + v.bid + v.offer : p),
       0,
     );
-    const count = markets.reduce((p, v) => (v.bid && v.offer ? p + 1 : p), 0);
-    return Math.round((sum * 100) / count / 2) / 100;
+    const count = firstTwoMarkets.reduce(
+      (p, v) => (v.bid && v.offer ? p + 1 : p),
+      0,
+    );
+    const price = Math.round((sum * 100) / count / 2) / 100;
+
+    return { underlying: this._underlying, price };
   }
 
   private getStrike(name: string): number {
@@ -475,10 +530,6 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       (p, leg) => {
         p[leg] = options
           .filter((item) => item.instrumentName.includes(leg.toUpperCase()))
-          .map((item) => {
-            // console.log(item);
-            return item;
-          })
           .filter((item) =>
             leg == LegTypeEnum.Put ? item.strike < price : item.strike > price,
           )
@@ -537,22 +588,27 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       gLogger.info("Trader.processIdleState", "Time for trading!");
       this.nextEvent = undefined;
 
-      // Fetch 0 DTE options list
-      const options = await this.getDailyOptionsOf(this._market);
       // Get underlying price
-      const price = await this.getUnderlyingPrice();
-      // console.log(`Underlying price is ${price}`);
+      const { underlying, price } = await this.getUnderlyingPrice();
+      gLogger.debug(`${underlying} price is ${price}`);
+
+      // Fetch 0 DTE options list
+      const twoLegsContracts = await this.getDailyOptionsOf(
+        this._market,
+        price,
+        this.delta,
+      );
       // console.log(`Found ${options.length} daily options`);
       // console.log(
       //   `Options: ${options.map((item) => item.instrumentName).join(", ")}`,
       // );
 
-      if (options && price) {
+      if (twoLegsContracts) {
         // Place an entry order
         this.globalStatus.status = StatusType.Dealing;
 
         // Get delta distance put and call
-        const twoLegsContracts = this.findEntryContract(options, price);
+        //    const twoLegsContracts = this.findEntryContract(options, price);
         // console.log(twoLegsContracts);
         if (
           !twoLegsContracts[LegTypeEnum.Put] ||
@@ -613,7 +669,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
       }
     } else {
       this.displayCountDown(
-        Math.floor((this._nextEvent! + this._delay * 60_000 - now) / 60_000),
+        Math.ceil((this._nextEvent! + this._delay * 60_000 - now) / 60_000),
       );
     }
   }
@@ -660,7 +716,7 @@ Conditions will be checked approximately every ${this._sampling} second${this._s
           if (position) {
             legData.contract = {
               ...position.market,
-              strike: this.getStrike(position.market.instrumentName),
+              // strike: this.getStrike(position.market.instrumentName),
             };
             if (!legData.ath) legData.ath = position.position.level;
             if (legData.contract.bid! > legData.ath)

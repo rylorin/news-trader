@@ -1,0 +1,7 @@
+#!/bin/sh
+# Build the bot image and redeploy the stack (runs on the VPS after upload).
+set -e
+cd "$(dirname "$0")/.."
+docker build -t rylorin/news-trader:dev .
+[ -f .env ] && set -a && . ./.env && set +a
+# docker stack deploy -c docker-compose.yml news-trader

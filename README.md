@@ -300,7 +300,7 @@ yarn test:coverage
 
 ### Project Structure
 
-```
+```textÒ
 src/
 ├── index.ts                    # Main application entry point
 ├── trader.ts                   # Core trading logic
